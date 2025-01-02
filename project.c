@@ -10,7 +10,7 @@ void generate_random_password(char *password, int length);
 void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
 int start_menu();
 int is_username_taken(const char *username);
-//int user_entrance_menu();
+int user_entrance_menu();
 
 int main() {
     initscr();
@@ -24,19 +24,20 @@ int main() {
         clear();
         switch(choice) {
             case 1:
+                clear();
                 create_user();
+                clear();
+
                 break;
             case 2:
-               /* if (user_entrance_menu()) {
+                clear();
+                if (user_entrance_menu()) {
                     printw("Login successful\n");
                 } else {
                     printw("Invalid username or password\n");
                 }
                 getch();
-                break;*/
-                printw("load user\n");
-                getch();
-                break
+                break;
             default:
                 printw("Invalid choice\n");
                 getch();
@@ -227,12 +228,6 @@ void create_user() {
 
     snprintf(filename, sizeof(filename), "%s.txt", username);
     FILE* file_user= fopen(filename, "a");
-    if (file_user == NULL) {
-        mvwprintw(input_win, 8, 1, "Error opening file_user");
-        wrefresh(input_win);
-        getch();
-        return;
-    }
     fprintf(file_user, "Username: %s\nPassword: %s\nEmail: %s\n\n", username, password, email);
     fclose(file_user);
 
@@ -246,6 +241,7 @@ int is_username_taken(const char *username) {
     snprintf(filename, sizeof(filename), "%s.txt", username);
     FILE *file = fopen(filename, "r");
     if (!file) return 0; // If file doesn't exist, username is not taken
+
     char line[256];
     while (fgets(line, sizeof(line), file)) {
         if (strstr(line, "Username: ") == line) { // Check if line starts with "Username: "
@@ -260,7 +256,86 @@ int is_username_taken(const char *username) {
     fclose(file);
     return 0;
 }
-    /*
+int user_entrance_menu(){
+    char username[50];
+    char password[50];
+    char filename[60];
+    char stored_username[50];
+    char stored_password[50];
+    int authenticated = 0;
+    char line[100];
+
+    // Initialize ncurses window for input
+    WINDOW *input_win = newwin(12, 60, (LINES - 12) / 2, (COLS - 50) / 2);
+    box(input_win, 0, 0);
+    refresh();
+    wrefresh(input_win);
+    keypad(input_win, TRUE);
+
+    // Get username
+    mvwprintw(input_win, 1, 1, "Enter Username: ");
+    echo();  // Enable echo to see the input
+    mvwgetstr(input_win, 1, 17, username);
+    noecho();  // Disable echo again
+
+    // Check if username is taken
+    if (!is_username_taken(username)) {
+        mvwprintw(input_win, 7, 1, "This username doesn't exist!");
+        mvwprintw(input_win, 8, 1, "Press enter to refill...");
+        wrefresh(input_win);
+        getch();
+        user_entrance_menu();
+    }
+
+    // Option to generate random password
+    mvwprintw(input_win, 3, 1, "Press 'f' if you forget your password");
+    wrefresh(input_win);
+
+    // Get password
+    mvwprintw(input_win, 4, 1, "Enter Password: ");
+    echo();
+    int ch = wgetch(input_win);
+    if (ch == 'f') {
+        generate_random_password(password, 7);
+        mvwprintw(input_win, 5, 1, "Generated Password: %s", password);
+        noecho();
+        wrefresh(input_win);
+    } else {
+        mvwgetstr(input_win, 4, 17, password);
+        noecho();
+    }
+    snprintf(filename, sizeof(filename), "%s.txt", username);
+    FILE* file= fopen(filename, "r");
+    if (file == NULL) {
+        mvwprintw(input_win, 5, 1, "Error opening user file");
+        wrefresh(input_win);
+        getch();
+        delwin(input_win);
+        return 0;
+    }
+
+    // Check if the username and password are correct
+    fscanf(file, "Username: %s\nPassword: %s\n", stored_username, stored_password);
+    fclose(file);
+
+    // Check if the username and password are correct
+    if (strcmp(username, stored_username) == 0 && strcmp(password, stored_password) == 0) {
+        authenticated = 1;
+    }
+
+    if (authenticated) {
+        mvwprintw(input_win, 5, 1, "Login successful");
+    } else {
+        mvwprintw(input_win, 5, 1, "Invalid username or password");
+    }
+    wrefresh(input_win);
+    getch();
+    delwin(input_win);
+
+    return authenticated;
+}
+
+  /*
 void create_user() {
     clear();
     cbreak();
