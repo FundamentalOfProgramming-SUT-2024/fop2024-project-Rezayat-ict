@@ -3,14 +3,14 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
-
+//
 // Function declarations
 void create_user();
 void generate_random_password(char *password, int length);
 void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
 int start_menu();
 int is_username_taken(const char *username);
-int user_entrance_menu();
+//int user_entrance_menu();
 
 int main() {
     initscr();
@@ -27,13 +27,16 @@ int main() {
                 create_user();
                 break;
             case 2:
-                if (user_entrance_menu()) {
+               /* if (user_entrance_menu()) {
                     printw("Login successful\n");
                 } else {
                     printw("Invalid username or password\n");
                 }
                 getch();
-                break;
+                break;*/
+                printw("load user\n");
+                getch();
+                break
             default:
                 printw("Invalid choice\n");
                 getch();
@@ -230,7 +233,7 @@ void create_user() {
         getch();
         return;
     }
-    fprintf(file_user, "%s\n%s\n%s\n\n", username, password, email);
+    fprintf(file_user, "Username: %s\nPassword: %s\nEmail: %s\n\n", username, password, email);
     fclose(file_user);
 
     mvwprintw(input_win, 8, 1, "User created successfully!");
@@ -239,9 +242,10 @@ void create_user() {
 }
 
 int is_username_taken(const char *username) {
-    FILE *file = fopen("users.txt", "r");
+    char filename[60];
+    snprintf(filename, sizeof(filename), "%s.txt", username);
+    FILE *file = fopen(filename, "r");
     if (!file) return 0; // If file doesn't exist, username is not taken
-
     char line[256];
     while (fgets(line, sizeof(line), file)) {
         if (strstr(line, "Username: ") == line) { // Check if line starts with "Username: "
