@@ -11,7 +11,7 @@ void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
 int start_menu();
 int is_username_taken(const char *username);
 int user_entrance_menu();
-
+void reset_password_help();
 int main() {
     initscr();
     clear();
@@ -296,9 +296,12 @@ int user_entrance_menu(){
     echo();
     int ch = wgetch(input_win);
     if (ch == 'f') {
-        generate_random_password(password, 7);
-        mvwprintw(input_win, 5, 1, "Generated Password: %s", password);
+        clear();
+        reset_password_help();
+        //mvwprintw(input_win, 5, 1, "Generated Password: %s", password);
         noecho();
+        clear();
+        user_entrance_menu();
         wrefresh(input_win);
     } else {
         mvwgetstr(input_win, 4, 17, password);
@@ -333,6 +336,68 @@ int user_entrance_menu(){
     delwin(input_win);
 
     return authenticated;
+}
+void reset_password_help() {
+    char username[50];
+    char email[50];
+    char filename[60];
+    char stored_username[50];
+    char stored_email[50];
+    char stored_password[50];
+    FILE *file;
+
+    // Initialize ncurses window for input
+    WINDOW *input_win = newwin(10, 50, (LINES - 10) / 2, (COLS - 50) / 2);
+    box(input_win, 0, 0);
+    refresh();
+    wrefresh(input_win);
+    keypad(input_win, TRUE);
+
+    // Get username
+    mvwprintw(input_win, 1, 1, "Enter Username: ");
+    echo();
+    mvwgetstr(input_win, 1, 17, username);
+    noecho();
+    if(!is_username_taken(username)){
+        mvwprintw(input_win, 7, 1, "This username doesn't exist!");
+        mvwprintw(input_win, 8, 1, "Press enter to refill...");
+        wrefresh(input_win);
+        getch();
+        reset_password_help();    
+    }
+    // Get email
+    mvwprintw(input_win, 3, 1, "Enter Email: ");
+    echo();
+    mvwgetstr(input_win, 3, 17, email);
+    noecho();
+
+    // Create the filename based on the username
+    snprintf(filename, sizeof(filename), "%s.txt", username);
+
+    // Open the user's file for reading
+    file = fopen(filename, "r");
+    if (file == NULL) {
+        mvwprintw(input_win, 5, 1, "Error opening user file");
+        wrefresh(input_win);
+        getch();
+        delwin(input_win);
+        return;
+    }
+
+    // Read the stored username and email from the file
+    fscanf(file, "Username: %s\nPassword: %s\nEmail: %s\n", stored_username,stored_password, stored_email);
+    fclose(file);
+
+    // Check if the username and email are correct
+    if (strcmp(username, stored_username) == 0 && strcmp(email, stored_email) == 0) {
+        mvwprintw(input_win, 5, 1, "Your entered email is correct.");
+        mvwprintw(input_win, 6, 1, "Your password is: %s",stored_password);
+    } else {
+        mvwprintw(input_win, 5, 1, "Invalid username or email. Please try again.");
+    }
+    wrefresh(input_win);
+    getch();
+    delwin(input_win);
 }
 
   /*
