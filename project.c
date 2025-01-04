@@ -4,6 +4,13 @@
 #include <ctype.h>
 #include <time.h>
 #include <time.h>
+#define MAX_MUSIC_TRACKS 10
+typedef struct {
+    int difficulty;
+    char main_color[20];
+    char music[MAX_MUSIC_TRACKS][50];
+    int selected_music;
+} Settings;
 typedef struct {
     char username[50];
     int total_score;
@@ -11,6 +18,7 @@ typedef struct {
     int games_played;
     time_t first_game_time;
 } Player;
+Settings settings;
 // Function declarations
 void create_user();
 void generate_random_password(char *password, int length);
@@ -24,13 +32,24 @@ void start_new_game(char *username);
 void continue_game(char *username);
 void view_leaderboard(char *username);
 
+void display_settings_menu(char *username);
+void change_difficulty();
+void change_color();
+void select_music();
+void save_settings(const char *username);
+void load_settings(const char *username);
+/*void load_music(settings);*/
+void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
 int main() {
     initscr();
     clear();
     noecho();
     cbreak();  // Line buffering disabled. pass on everything
     curs_set(0);
-
+    settings.difficulty=1;
+    strcpy(settings.main_color,"Red");
+    //strcpy (settings.music,"Track1");
+    settings.selected_music=1;
     int choice;
     while((choice = start_menu()) != 3) {
         clear();
@@ -45,6 +64,10 @@ int main() {
                 clear();
                 user_entrance_menu();
                 getch();
+                break;
+            case 3:
+                clear();
+                endwin();
                 break;
             default:
                 printw("Invalid choice\n");
@@ -236,7 +259,7 @@ void create_user() {
 
     snprintf(filename, sizeof(filename), "%s.txt", username);
     FILE* file_user= fopen(filename, "a");
-    fprintf(file_user, "Username: %s\nPassword: %s\nEmail: %s\n\n", username, password, email);
+    fprintf(file_user, "Username: %s\nPassword: %s\nEmail: %s\n\nDifficulty: %d\nMain Color: %s\nSelected Music: %d", username, password, email,1,"Red",1);
     fclose(file_user);
     file=fopen("leaderboard.txt","a");
     fprintf(file, "%s,%d,%d,%d,%d\n", username,0,0,0,0);
@@ -503,6 +526,7 @@ void before_game_menu(char* username){
         "Start New Game",
         "Continue Previous Game",
         "View Leaderboard",
+        "Settings",
         "Exit"
     };
     int n_choices = sizeof(choices) / sizeof(char *);
@@ -562,6 +586,13 @@ void before_game_menu(char* username){
             before_game_menu(username);
             break;
         case 4:
+            // Exit
+            clear();
+            display_settings_menu(username);
+            clear();
+            before_game_menu(username);
+            break;        
+        case 5:
             // Exit
             clear();
             start_menu();
@@ -673,4 +704,321 @@ void view_leaderboard(char *username) {
     getch();
     delwin(leaderboard_win);
     clear();
+}
+void display_settings_menu(char *username) {
+    WINDOW *settings_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+    char *choices[] = {
+        "Change Difficulty",
+        "Change Main Color",
+        "Select Music",
+        "Save and Exit"
+    };
+    int n_choices = sizeof(choices) / sizeof(char *);
+
+    settings_win = newwin(10, 40, (LINES/2)-2, (COLS/2)-19);
+    keypad(settings_win, TRUE);
+    mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
+    refresh();
+    print_settings_menu(settings_win, highlight, choices, n_choices);
+    while(1) {
+        c = wgetch(settings_win);
+        switch(c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = n_choices;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == n_choices)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10:
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+        print_settings_menu(settings_win, highlight, choices, n_choices);
+        if (choice != 0)
+            break;
+    }
+
+    switch(choice) {
+        case 1:
+            clear();
+            change_difficulty();
+            break;
+        case 2:
+            clear();
+            change_color();
+            break;
+        case 3:
+            clear();
+            select_music();
+            break;
+        case 4:
+            save_settings(username);
+            return;
+        default:
+            printw("Invalid choice. Please try again.\n");
+            getch();
+            break;
+    }
+}
+
+void change_difficulty() {
+    WINDOW *difficulty_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+
+    char *difficulties[] = {
+        "1",
+        "2",
+        "3"
+    };
+    int n_difficulties = sizeof(difficulties) / sizeof(char *);
+
+    difficulty_win = newwin(10, 40, (LINES/2)-2, (COLS/2)-3);
+    keypad(difficulty_win, TRUE);
+    mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
+    refresh();
+    while(1) {
+        for (int i = 0; i < n_difficulties; ++i) {
+            if (highlight == i + 1) {
+                wattron(difficulty_win, A_REVERSE);
+                mvwprintw(difficulty_win, i + 2, 2, "%s", difficulties[i]);
+                wattroff(difficulty_win, A_REVERSE);
+            } else {
+                mvwprintw(difficulty_win, i + 2, 2, "%s", difficulties[i]);
+            }
+        }
+        wrefresh(difficulty_win);
+
+        c = wgetch(difficulty_win);
+        switch(c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = n_difficulties;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == n_difficulties)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10:
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+
+        if (choice != 0) {
+            settings.difficulty = choice;
+            mvprintw(1, 1, "Difficulty %d selected!", settings.difficulty);
+            refresh();
+            getch();
+            break;
+        }
+    }
+    delwin(difficulty_win);
+}
+
+void change_color() {
+    WINDOW *color_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+
+    char *colors[] = {
+        "Red",
+        "Green",
+        "Blue",
+        "Yellow"
+    };
+    int n_colors = sizeof(colors) / sizeof(char *);
+
+    color_win = newwin(10, 40, (LINES/2)-12, (COLS/2)-3);
+    keypad(color_win, TRUE);
+    mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
+    refresh();
+    while(1) {
+        for (int i = 0; i < n_colors; ++i) {
+            if (highlight == i + 1) {
+                wattron(color_win, A_REVERSE);
+                mvwprintw(color_win, i + 2, 2, "%s", colors[i]);
+                wattroff(color_win, A_REVERSE);
+            } else {
+                mvwprintw(color_win, i + 2, 2, "%s", colors[i]);
+            }
+        }
+        wrefresh(color_win);
+
+        c = wgetch(color_win);
+        switch(c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = n_colors;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == n_colors)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10:
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+
+        if (choice != 0) {
+            strcpy(settings.main_color, colors[choice - 1]);
+            mvprintw(1, 1, "Color %s selected!", settings.main_color);
+            refresh();
+            getch();
+            break;
+        }
+    }
+
+    delwin(color_win);
+}
+
+
+void select_music() {
+    WINDOW *music_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+
+    music_win = newwin(10, 40, (LINES/2)-12, (COLS/2)-3);
+    keypad(music_win, TRUE);
+    mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
+    refresh();
+    while(1) {
+        for (int i = 0; i < MAX_MUSIC_TRACKS; ++i) {
+            if (highlight == i + 1) {
+                wattron(music_win, A_REVERSE);
+                mvwprintw(music_win, i + 2, 2, "%s", settings.music[i]);
+                wattroff(music_win, A_REVERSE);
+            } else {
+                mvwprintw(music_win, i + 2, 2, "%s", settings.music[i]);
+            }
+        }
+        wrefresh(music_win);
+
+        c = wgetch(music_win);
+        switch(c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = MAX_MUSIC_TRACKS;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == MAX_MUSIC_TRACKS)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10:
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+
+        if (choice != 0) {
+            settings.selected_music = choice - 1; // Convert to 0-based index
+            mvprintw(1, 1, "Music %d selected!", settings.selected_music);
+            refresh();
+            getch();
+            break;
+        }
+    }
+
+    delwin(music_win);
+}
+
+
+void save_settings(const char *username) {
+    char filename[60];
+    snprintf(filename, sizeof(filename), "%s.txt", username);
+    FILE *file = fopen(filename, "r+");
+    if (file == NULL) {
+        printw("Error saving settings.\n");
+        return;
+    }
+    long pos = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        if (strstr(line, "Difficulty") != NULL) {
+            pos = ftell(file) - strlen(line);
+            break;
+        }
+    }
+
+    fseek(file, pos, SEEK_SET); // حرکت به موقعیت پیدا شده
+    fprintf(file, "Difficulty: %d\n", settings.difficulty);
+    fprintf(file, "Main Color: %s\n", settings.main_color);
+    fprintf(file, "Selected Music: %d\n", settings.selected_music);
+    fclose(file);
+}
+
+void load_settings(const char *username) {
+    FILE *file = fopen(username, "r");
+    if (file == NULL) {
+        // Default settings
+        settings.difficulty = 1;
+        strcpy(settings.main_color, "Red");
+        settings.selected_music = 0;
+        //load_music(settings);
+        return;
+    }
+    fscanf(file, "Difficulty: %d\n", &settings.difficulty);
+    fscanf(file, "Main Color: %s\n", settings.main_color);
+    fscanf(file, "Selected Music: %s\n", settings.music[settings.selected_music]);
+    fclose(file);
+}
+
+/*void load_music(settings) {
+    strcpy(settings.music[0], "Track 1");
+    strcpy(settings.music[1], "Track 2");
+    strcpy(settings.music[2], "Track 3");
+    // Add more tracks as needed
+
+}*/
+void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices) {
+    int x, y, i;
+
+    x = 2;
+    y = 2;
+    box(menu_win, 0, 0);
+    for (i = 0; i < n_choices; ++i) {
+        if (highlight == i + 1) {
+            wattron(menu_win, A_REVERSE);
+            mvwprintw(menu_win, y, x, "%s", choices[i]);
+            wattroff(menu_win, A_REVERSE);
+        } else {
+            mvwprintw(menu_win, y, x, "%s", choices[i]);
+        }
+        ++y;
+    }
+    wrefresh(menu_win);
 }
