@@ -3,7 +3,6 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
-#include <time.h>
 
 #define MAX_MUSIC_TRACKS 10
 #define MAX_ROOMS 6
