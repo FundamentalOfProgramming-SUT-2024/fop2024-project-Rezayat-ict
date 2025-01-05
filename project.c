@@ -4,7 +4,12 @@
 #include <ctype.h>
 #include <time.h>
 #include <time.h>
+
 #define MAX_MUSIC_TRACKS 10
+#define MAX_ROOMS 6
+#define ROOM_MIN_WIDTH 6
+#define ROOM_MIN_HEIGHT 6
+
 typedef struct {
     int difficulty;
     char main_color[20];
@@ -19,7 +24,22 @@ typedef struct {
     time_t first_game_time;
 } Player;
 Settings settings;
+typedef struct {
+    int x, y, width, height;
+} Room;
+typedef struct {
+    Room rooms[MAX_ROOMS];
+    int room_count;
+    int **map;
+} Map;
+
 // Function declarations
+void create_room(Room *room, int max_width, int max_height);
+void place_rooms(Map *map, int max_width, int max_height);
+void connect_rooms(Map *map);
+void add_pillars_stair(Map *map);
+void generate_map(Map *map, int max_width, int max_height);
+void print_map(Map *map, int max_width, int max_height);
 void create_user();
 void generate_random_password(char *password, int length);
 void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
@@ -614,10 +634,24 @@ void start_new_game(char *username) {
     // Save the initial game state
     fprintf(file, "New game started\n");
     fclose(file);
+    int max_width, max_height;
+    getmaxyx(stdscr, max_height, max_width);
+    Map map;
+    map.map = (int **)malloc(max_height * sizeof(int *));
+    for (int i = 0; i < max_height; i++) {
+        map.map[i] = (int *)malloc(max_width * sizeof(int));
+    }
 
-    printw("New game started for user: %s\n", username);
-    refresh();
+    srand(time(NULL));
+    generate_map(&map, max_width, max_height);
+    print_map(&map, max_width, max_height);
+
+    for (int i = 0; i < max_height; i++) {
+        free(map.map[i]);
+    }
+    free(map.map);
     getch();
+    refresh();
 }
 void continue_game(char *username) {
     // Load the previous game state from the user's file
@@ -1021,4 +1055,156 @@ void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_
         ++y;
     }
     wrefresh(menu_win);
+}
+void create_room(Room *room, int max_width, int max_height) {
+    room->width = ROOM_MIN_WIDTH + rand() % 3; // حداقل عرض 4، حداکثر 6
+    room->height = ROOM_MIN_HEIGHT + rand() % 3; // حداقل ارتفاع 4، حداکثر 6
+    room->x = rand() % (max_width - room->width - 1) + 1;
+    room->y = rand() % (max_height - room->height - 2) + 2;
+}
+
+void place_rooms(Map *map, int max_width, int max_height) {
+    map->room_count = 0;
+    while (map->room_count < MAX_ROOMS) {
+        Room new_room;
+        if(map->room_count==0){
+            new_room.width = 6; // حداقل عرض 4، حداکثر 6
+            new_room.height = 6; // حداقل ارتفاع 4، حداکثر 6
+            new_room.x = 0;
+            new_room.y = 0;  
+            map->rooms[map->room_count++] = new_room;
+            for (int y = new_room.y; y < new_room.y + new_room.height; y++) {
+                for (int x = new_room.x; x < new_room.x + new_room.width; x++) {
+                    map->map[y][x] = '.';
+                }
+            }         
+        }
+        else
+            create_room(&new_room, max_width, max_height);
+        int intersect = 0;
+        for (int j = 0; j < map->room_count; j++) {
+            Room *other_room = &map->rooms[j];
+            if (!(new_room.x + new_room.width < other_room->x ||
+                  new_room.x > other_room->x + other_room->width ||
+                  new_room.y + new_room.height < other_room->y ||
+                  new_room.y > other_room->y + other_room->height)) {
+                intersect = 1;
+                break;
+            }
+        }
+        if (!intersect) {
+            map->rooms[map->room_count++] = new_room;
+            for (int y = new_room.y; y < new_room.y + new_room.height; y++) {
+                for (int x = new_room.x; x < new_room.x + new_room.width; x++) {
+                    map->map[y][x] = '.';
+                }
+            }
+            // اضافه کردن ورودی اتاق در وسط هر دیوار (بدون گوشه‌ها)
+            /*map->map[new_room.y + new_room.height / 2][new_room.x] = '+'; // ورودی در دیوار چپ
+            map->map[new_room.y][new_room.x + new_room.width / 2] = '+'; // ورودی در دیوار بالا
+            map->map[new_room.y + new_room.height / 2][new_room.x + new_room.width - 1] = '+'; // ورودی در دیوار راست
+            map->map[new_room.y + new_room.height - 1][new_room.x + new_room.width / 2] = '+'; // ورودی در دیوار پایین
+        */
+       }
+    }
+}
+
+void connect_rooms(Map *map) {
+    for (int i = 0; i < map->room_count - 1; i++) {
+        Room *room1 = &map->rooms[i];
+        Room *room2 = &map->rooms[i + 1];
+        int x1 = room1->x + room1->width / 2;
+        int y1 = room1->y + room1->height / 2;
+        int x2 = room2->x + room2->width / 2;
+        int y2 = room2->y + room2->height / 2;
+        
+        while (x1 != x2) {
+            if (map->map[y1][x1] == '.') {
+                map->map[y1][x1] = '+';
+            } else {
+                map->map[y1][x1] = '#';
+            }
+            if(x2>x1&& map->map[y1][x1+1]!='O'){
+                x1 += (x2 > x1) ? 1 : -1;
+                continue;
+            }
+            else if(x2<x1&& map->map[y1][x1-1]!='O'){
+                x1 += (x2 > x1) ? 1 : -1;
+                continue;
+            }
+            else{
+                y1 += (y2 > y1) ? 1 : -1;
+            }
+            
+        }
+        while (y1 != y2) {
+            if (map->map[y1][x1] == '.') {
+                map->map[y1][x1] = '+';
+            } else {
+                map->map[y1][x1] = '#';
+            }
+            y1 += (y2 > y1) ? 1 : -1;
+        }
+    }
+    for (int i = 0; i < map->room_count; i++) {
+        Room *room = &map->rooms[i];
+        for (int y = room->y+1; y < room->y + room->height-1; y++) {
+            for (int x = room->x+1; x < room->x + room->width-1; x++) {
+                map->map[y][x] = '.';
+            }
+        }
+    }
+}
+
+void add_pillars_stair(Map *map) {
+    for (int i = 0; i < map->room_count; i++) {
+        Room *room = &map->rooms[i];
+        int pillars = (room->width - 2) * (room->height - 2) / 8; // تعداد ستون‌ها
+        for (int j = 0; j < pillars; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'O'; // ستون
+            }
+        }
+    }
+    Room *room = &map->rooms[0];
+    map->map[3][3] = '<'; // ستون
+
+}
+
+void generate_map(Map *map, int max_width, int max_height) {
+    for (int y = 0; y < max_height; y++) {
+        for (int x = 0; x < max_width; x++) {
+            map->map[y][x] = ' ';
+        }
+    }
+    place_rooms(map, max_width, max_height);
+    connect_rooms(map);
+    add_pillars_stair(map);
+    for (int i = 0; i < map->room_count; i++) {
+        Room *room = &map->rooms[i];
+        for (int x = room->x; x < room->x + room->width; x++) {
+            if(map->map[room->y][x] != '+')
+                map->map[room->y][x] = '-';
+            if( map->map[room->y + room->height - 1][x] != '+')
+                map->map[room->y + room->height - 1][x] = '-';
+        }
+        for (int y = room->y; y < room->y + room->height; y++) {
+            if(map->map[y][room->x] != '+')
+                map->map[y][room->x] = '|';
+            if(map->map[y][room->x + room->width - 1] != '+')
+                map->map[y][room->x + room->width - 1] = '|';
+        }
+    }
+}
+
+void print_map(Map *map, int max_width, int max_height) {
+    clear();
+    for (int y = 0; y < max_height; y++) {
+        for (int x = 0; x < max_width; x++) {
+            mvprintw(y + 1, x, "%c", map->map[y][x]); // یک خط از بالا برای پیام‌ها خالی می‌ماند
+        }
+    }
+    refresh();
 }
