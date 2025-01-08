@@ -1,4 +1,5 @@
-#include <ncurses.h>
+#include <locale.h>
+#include <ncursesw/ncurses.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -38,14 +39,19 @@ typedef struct {
     int room_count;
     int **map;
 } Map;
-
+typedef struct {
+    int x ,y;
+    char color [20];
+} Hero;
+Hero hero;
+int **map_check;
 // Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
 void connect_rooms(Map *map);
 void add_pillars_stair_traps(Map *map);
 void generate_map(Map *map, int max_width, int max_height);
-void print_map(Map *map, int max_width, int max_height);
+void print_map(Map *map, int max_width, int max_height,char* username);
 void create_user();
 void generate_random_password(char *password, int length);
 void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
@@ -63,13 +69,19 @@ void change_difficulty();
 void change_color();
 void select_music();
 void save_settings(const char *username);
-void load_settings(const char *username);
+void load_settings(char *username);
 
 void secret_room(Map *map,int i);
 void password_room(Map *map,int i);
+void special_key(Map *map);
 /*void load_music(settings);*/
 void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
+void hero_movement(Map *map, char* username);
+int is_valid_move(Map *map, int new_y, int new_x);
+void print_selected_room(Map *map, char* username,int room_num);
+int which_room(Map *map,int x,int y);
 int main() {
+    setlocale(LC_CTYPE,"");
     initscr();
     clear();
     noecho();
@@ -647,14 +659,25 @@ void start_new_game(char *username) {
     getmaxyx(stdscr, max_height, max_width);
     Map map;
     map.map = (int **)malloc(max_height * sizeof(int *));
+    map_check=(int **)malloc(max_height * sizeof(int *));
     for (int i = 0; i < max_height; i++) {
         map.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check[i]=(int *)malloc(max_width * sizeof(int));
     }
 
     srand(time(NULL));
     generate_map(&map, max_width, max_height);
-    print_map(&map, max_width, max_height);
-
+    for (int y = 0; y < max_height; y++) {
+        for (int x = 0; x < max_width; x++) {
+            map_check[y][x]=map.map[y][x];
+        }
+    }
+    print_map(&map, max_width, max_height,username);
+    while (1) {
+        //clear();
+        hero_movement(&map,username);
+        refresh();
+    }
     for (int i = 0; i < max_height; i++) {
         free(map.map[i]);
     }
@@ -1025,7 +1048,7 @@ void save_settings(const char *username) {
     fclose(file);
 }
 
-void load_settings(const char *username) {
+void load_settings(char *username) {
     FILE *file = fopen(username, "r");
     if (file == NULL) {
         // Default settings
@@ -1134,19 +1157,13 @@ void connect_rooms(Map *map) {
         int x2 = room2->x + room2->width / 2;
         int y2 = room2->y + room2->height / 2;
         
-        // بررسی اینکه فاصله بین اتاق‌ها حداقل ۱۰ واحد باشد
-        int distance = abs(x1 - x2) + abs(y1 - y2);
-        if (distance < 10) {
-            // در اینجا می‌توانید کدی اضافه کنید تا اتاق‌های بعدی که فاصله‌ی مناسب دارند انتخاب شوند.
-            continue;
-        }
-
-        // مسیر را از نقطه شروع به سمت نقطه مقصد رسم می‌کنیم
+        int way_len = 0;
         while (x1 != x2) {
             if (map->map[y1][x1] == '.') {
                 map->map[y1][x1] = '+';
             } else {
                 map->map[y1][x1] = '#';
+                way_len++;
             }
 
             // بررسی حرکت در راستای افقی
@@ -1165,8 +1182,14 @@ void connect_rooms(Map *map) {
                 map->map[y1][x1] = '+';
             } else {
                 map->map[y1][x1] = '#';
+                way_len++;
             }
             y1 += (y2 > y1) ? 1 : -1;
+        }
+        if(way_len<10){
+            int max_width, max_height;
+            getmaxyx(stdscr, max_height, max_width);
+            generate_map(map,max_width,max_height);
         }
     }
 
@@ -1185,21 +1208,21 @@ void secret_room(Map *map,int i){
     Room *room = &map->rooms[i];
     for (int x = room->x; x < room->x + room->width; x++) {
         if(map->map[room->y][x] == '+'){
-            map->map[room->y][x] = '.';
+            map->map[room->y][x] = '?';
             return;
         }
         if( map->map[room->y + room->height - 1][x] == '+'){
-            map->map[room->y + room->height - 1][x] = '.';
+            map->map[room->y + room->height - 1][x] = '?';
             return;
         }
     }
     for (int y = room->y; y < room->y + room->height; y++) {
         if(map->map[y][room->x] == '+'){
-            map->map[y][room->x] = '.';
+            map->map[y][room->x] = '!';
             return;
         }
         if(map->map[y][room->x + room->width - 1] == '+'){
-            map->map[y][room->x + room->width - 1] = '.';
+            map->map[y][room->x + room->width - 1] = '!';
             return;
         }
     }
@@ -1264,7 +1287,7 @@ void add_pillars_stair_traps(Map *map) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = '^'; // ستون
+                map->map[py][px] = '8'; // ستون
             }
         }
     }
@@ -1285,17 +1308,17 @@ void generate_map(Map *map, int max_width, int max_height) {
     int have_secrest ,have_password =0;
     for (int i = 0; i < map->room_count; i++) {
         Room *room = &map->rooms[i];
-        for (int x = room->x; x < room->x + room->width; x++) {
-            if(map->map[room->y][x] != '+')
-                map->map[room->y][x] = '-';
-            if( map->map[room->y + room->height - 1][x] != '+')
-                map->map[room->y + room->height - 1][x] = '-';
-        }
         for (int y = room->y; y < room->y + room->height; y++) {
             if(map->map[y][room->x] != '+')
                 map->map[y][room->x] = '|';
             if(map->map[y][room->x + room->width - 1] != '+')
                 map->map[y][room->x + room->width - 1] = '|';
+        }
+        for (int x = room->x; x < room->x + room->width; x++) {
+            if(map->map[room->y][x] != '+')
+                map->map[room->y][x] = '-';
+            if( map->map[room->y + room->height - 1][x] != '+')
+                map->map[room->y + room->height - 1][x] = '-';
         }
         if(room->has_secret_door&&have_secrest==0){
             secret_room(map,i);
@@ -1306,14 +1329,135 @@ void generate_map(Map *map, int max_width, int max_height) {
             have_password=1;
         }
     }
+    special_key(map);
 }
 
-void print_map(Map *map, int max_width, int max_height) {
+void print_map(Map *map, int max_width, int max_height,char* username) {
+    clear();
+    print_selected_room(map,username,2);
+    Room selected_room=map->rooms[2];
+    int place_hero=0;
+    for (int y = selected_room.y; y < selected_room.y + selected_room.height; y++) {
+        for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
+            if(map->map[y][x]=='.'){
+                map->map[y][x]='H';
+                mvprintw(y + 1, x, "%c",map->map[y][x]);
+                place_hero=1;
+                hero.x=x;
+                hero.y=y;
+                break;                
+            }
+        }
+        if(place_hero==1)
+            break;
+    }
+    refresh();
+}
+/*void print_map(Map *map, int max_width, int max_height,char* username) {
     clear();
     for (int y = 0; y < max_height; y++) {
         for (int x = 0; x < max_width; x++) {
-            mvprintw(y + 1, x, "%c", map->map[y][x]); // یک خط از بالا برای پیام‌ها خالی می‌ماند
+            map_check[y][x]=map[y][x];
+            if(map->map[y][x]=='9'){
+                const char* key="△";
+                mvprintw(y + 1, x, "%s",key);                
+            }else if(map->map[y][x]=='8'){
+                const char* key="∧";
+                mvprintw(y + 1, x, "%s",key); 
+            }else
+                mvprintw(y + 1, x, "%c", map->map[y][x]);
+
         }
     }
     refresh();
+}*/
+void special_key(Map *map){
+    int room_num=rand()%6;
+    Room *room = &map->rooms[room_num];
+    int px = room->x + 2 + rand() % (room->width - 4);
+    int py = room->y + 2 + rand() % (room->height - 4);
+    while(map->map[py][px] == '.'){
+        px = room->x + 2 + rand() % (room->width - 4);
+        py = room->y + 2 + rand() % (room->height - 4);
+        if (map->map[py][px] == '.') {
+            map->map[py][px] =  '9';
+            break;
+        }
+    }
+}
+void print_selected_room(Map *map, char* username,int room_num){
+    Room selected_room;
+    selected_room=map->rooms[room_num];
+    for (int y = selected_room.y; y < selected_room.y + selected_room.height; y++) {
+        for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
+            if(map->map[y][x]=='9'){
+                const char* key="△";
+                mvprintw(y + 1, x, "%s",key);                
+            }else if(map->map[y][x]=='8'){
+                const char* tale=".";
+                mvprintw(y + 1, x, "%s",tale); 
+            }else if(map->map[y][x]=='!'){
+                const char* secret_door="|";
+                mvprintw(y + 1, x, "%s",secret_door); 
+            }else if(map->map[y][x]=='?'){
+                const char* secret_door="-";
+                mvprintw(y + 1, x, "%s",secret_door); 
+            }else
+                mvprintw(y + 1, x, "%c", map->map[y][x]);
+            //map_check[y][x]=1;
+        }
+    }
+}
+
+void hero_movement(Map *map, char* username){
+    load_settings(username);
+    strcpy(hero.color,settings.main_color);
+    int ch = getch(); // کلید ورودی را بگیر
+    int new_x = hero.x, new_y = hero.y;
+
+    // حرکت براساس کلید عددی
+    switch (ch) {
+        case '8':    new_y--; break; // حرکت به بالا (عدد 8)
+        case '2':    new_y++; break; // حرکت به پایین (عدد 2)
+        case '4':    new_x--; break; // حرکت به چپ (عدد 4)
+        case '6':    new_x++; break; // حرکت به راست (عدد 6)
+        case '7':    new_x--; new_y--; break; // حرکت به بالا-چپ (عدد 7)
+        case '9':    new_x++; new_y--; break; // حرکت به بالا-راست (عدد 9)
+        case '1':    new_x--; new_y++; break; // حرکت به پایین-چپ (عدد 1)
+        case '3':    new_x++; new_y++; break; // حرکت به پایین-راست (عدد 3)
+        case '5':    break; // هیچ عملی انجام نمی‌شود (عدد 5)
+        case 'q':    endwin(); return ; // خروج با کلید q
+    }
+
+    // بررسی حرکت معتبر
+    if (is_valid_move(map, new_y, new_x)) {
+        
+        map->map[hero.y][hero.x] = map_check[hero.y][hero.x]; // جای قبلی بازیکن را پاک کن
+        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+        hero.x = new_x;
+        hero.y = new_y;
+        if(map_check[hero.y][hero.y]=='.'){
+            print_selected_room(map,username,which_room(map,hero.x,hero.y)-1);
+        }
+        map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+    }
+}
+int is_valid_move(Map *map, int new_y, int new_x) {
+    char target = map->map[new_y][new_x];
+    // اگر مقصد دیوار، ستون یا خارج از نقشه بود، حرکت نامعتبر است
+    return (target != '|' && target != '-' && target != 'O' && target != ' ');
+}
+int which_room(Map *map, int x, int y) {
+    // پیمایش تمام اتاق‌ها
+    for (int i = 0; i < map->room_count; i++) {
+        Room *room = &map->rooms[i];
+
+        // بررسی اینکه آیا مختصات در محدوده اتاق قرار دارد
+        if (x >= room->x && x < room->x + room->width &&
+            y >= room->y && y < room->y + room->height) {
+            return i; // شماره اتاق را برگردان
+        }
+    }
+    return -1; // اگر مختصات به هیچ اتاقی تعلق نداشت
 }
