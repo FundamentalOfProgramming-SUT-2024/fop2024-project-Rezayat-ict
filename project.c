@@ -80,6 +80,7 @@ void hero_movement(Map *map, char* username);
 int is_valid_move(Map *map, int new_y, int new_x);
 void print_selected_room(Map *map, char* username,int room_num);
 int which_room(Map *map,int x,int y);
+void show_rooms(Map *map,int x,int y);
 int main() {
     setlocale(LC_CTYPE,"");
     initscr();
@@ -1430,14 +1431,88 @@ void hero_movement(Map *map, char* username){
     }
 
     // بررسی حرکت معتبر
-    if (is_valid_move(map, new_y, new_x)) {
-        
+    if (is_valid_move(map, new_y, new_x)) {    
         map->map[hero.y][hero.x] = map_check[hero.y][hero.x]; // جای قبلی بازیکن را پاک کن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
         hero.x = new_x;
         hero.y = new_y;
-        if(map_check[hero.y][hero.y]=='.'){
-            print_selected_room(map,username,which_room(map,hero.x,hero.y)-1);
+        if(map->map[hero.y][hero.x]=='.'){
+            mvprintw(0,0, "room_found");
+            print_selected_room(map,username,which_room(map,hero.x,hero.y));
+        }
+        else if(map_check[hero.y][hero.x]=='#'){
+            int x =hero.x;
+            int y=hero.y;
+            int i=0;
+            int vertical=0;
+            int horizontal=0;
+            while(i<5){
+                if(map_check[y][x+1]=='#'&&vertical==0){
+                    while(i<5){
+                        mvprintw(0,0, "goin right");
+                        if(map_check[y][x+1]!='#'){
+                            break;
+                        }
+                        else{
+                            x++;
+                            mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            i++;
+                        }
+                    }
+                    vertical=1;
+                    horizontal=0;
+                }
+                if(map_check[y+1][x]=='#'&& horizontal==0){
+                   while(i<5){
+                        mvprintw(0,0, "goin upward");
+                        if(map_check[y+1][x]!='#'){
+                            break;
+                        }
+                        else{
+                            y++;
+                            mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            i++;
+                        }
+                    }
+                    vertical=0;
+                    horizontal=1;
+                }
+                if(map_check[y-1][x]=='#'&&horizontal==0){
+                   while(i<5){
+                        mvprintw(0,0, "goin down  ");
+                        if(map_check[y-1][x]!='#'){
+                            break;
+                        }
+                        else{
+                            y-=1;
+                            mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            i++;
+                        }
+                    }
+                    vertical=0;
+                    horizontal=1;
+                }
+                if(map_check[y][x-1]=='#'&&vertical==0){
+                  while(i<5){
+                        mvprintw(0,0, "goin left  ");
+                        if(map_check[y][x-1]!='#'){
+                            break;
+                        }
+                        else{
+                            x-=1;
+                            mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            i++;
+                        }
+                    }
+                    vertical=1;
+                    horizontal=0;
+                }
+                else
+                    break;
+
+                i++;
+            }
+            
         }
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -1460,4 +1535,7 @@ int which_room(Map *map, int x, int y) {
         }
     }
     return -1; // اگر مختصات به هیچ اتاقی تعلق نداشت
+}
+void show_rooms(Map *map,int x,int y){
+    return;
 }
