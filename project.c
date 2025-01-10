@@ -5,12 +5,16 @@
 #include <ctype.h>
 #include <time.h>
 #include <wchar.h>
+#include <unistd.h>
 
 #define MAX_MUSIC_TRACKS 10
 #define MAX_ROOMS 6
 #define ROOM_MIN_WIDTH 6
 #define ROOM_MIN_HEIGHT 6
-
+int move_u=0;
+int move_d=0;
+int move_r=0;
+int move_l=0;
 typedef struct {
     int difficulty;
     char main_color[20];
@@ -45,6 +49,8 @@ typedef struct {
 } Hero;
 Hero hero;
 int **map_check;
+bool code_shown = false; // نشان می‌دهد که رمز فعلی نمایش داده شده یا نه
+time_t code_start_time = 0;
 // Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
@@ -56,6 +62,7 @@ void create_user();
 void generate_random_password(char *password, int length);
 void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
 int start_menu();
+void guest_entrance();
 int is_username_taken(const char *username);
 void user_entrance_menu();
 void reset_password_help();
@@ -74,6 +81,7 @@ void load_settings(char *username);
 void secret_room(Map *map,int i);
 void password_room(Map *map,int i);
 void special_key(Map *map);
+void show_code_temporarily(WINDOW *win, int x, int y, char *code);
 /*void load_music(settings);*/
 void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
 void hero_movement(Map *map, char* username);
@@ -93,7 +101,7 @@ int main() {
     //strcpy (settings.music,"Track1");
     settings.selected_music=1;
     int choice;
-    while((choice = start_menu()) != 3) {
+    while((choice = start_menu()) != 4) {
         clear();
         switch(choice) {
             case 1:
@@ -108,6 +116,11 @@ int main() {
                 getch();
                 break;
             case 3:
+                clear();
+                guest_entrance();
+                getch();
+                break;
+            case 4:
                 clear();
                 endwin();
                 break;
@@ -154,6 +167,7 @@ int start_menu() {
     char *choices[] = {
         "New player",
         "Exist player",
+        "geust",
         "Exit"
     };
     int n_choices = sizeof(choices) / sizeof(char *);
@@ -552,6 +566,68 @@ void reset_password_help() {
     getch();
     delwin(input_win);
 }
+void guest_entrance(){
+    WINDOW *menu_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+
+    char *choices[] = {
+        "Start New Game",
+        "Exit"
+    };
+    int n_choices = sizeof(choices) / sizeof(char *);
+
+    menu_win = newwin(10, 40, (LINES - 10) / 2, (COLS - 40) / 2);
+    keypad(menu_win, TRUE);
+    mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
+    refresh();
+    print_menu(menu_win, highlight, choices, n_choices);
+
+    while (1) {
+        c = wgetch(menu_win);
+        switch (c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = n_choices;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == n_choices)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10: // Enter key
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+        print_menu(menu_win, highlight, choices, n_choices);
+        if (choice != 0)
+            break;
+    }
+    clrtoeol();
+    refresh();
+    delwin(menu_win);
+    char username[10]="guest";
+    // Handle the user's choice
+    switch (choice) {
+        case 1:
+            // Start a new game
+            clear();
+            start_new_game(username);
+            break;       
+        case 2:
+            // Exit
+            clear();
+            start_menu();
+            break;
+    }    
+}
 void before_game_menu(char* username){
 /*    mvwprintw(input_win, 5, 1, "Login successful");
     wrefresh(input_win);
@@ -676,6 +752,10 @@ void start_new_game(char *username) {
     print_map(&map, max_width, max_height,username);
     while (1) {
         //clear();
+        if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
+                mvprintw(12, 0, "              "); // پاک کردن پیام
+                code_shown = false; // غیرفعال کردن نمایش رمز
+        }
         hero_movement(&map,username);
         refresh();
     }
@@ -1439,17 +1519,19 @@ void hero_movement(Map *map, char* username){
         if(map->map[hero.y][hero.x]=='.'){
             mvprintw(0,0, "room_found");
             print_selected_room(map,username,which_room(map,hero.x,hero.y));
+            move_r=0;
+            move_d=0;
+            move_u=0;
+            move_l=0;
         }
         else if(map_check[hero.y][hero.x]=='#'){
             int x =hero.x;
             int y=hero.y;
             int i=0;
-            int vertical=0;
-            int horizontal=0;
             while(i<5){
-                if(map_check[y][x+1]=='#'&&vertical==0){
+                if(map_check[y][x+1]=='#'&&move_l==0){
                     while(i<5){
-                        mvprintw(0,0, "goin right");
+                        mvprintw(0,0, "goin right %d",i);
                         if(map_check[y][x+1]!='#'){
                             break;
                         }
@@ -1459,27 +1541,30 @@ void hero_movement(Map *map, char* username){
                             i++;
                         }
                     }
-                    vertical=1;
-                    horizontal=0;
+                    move_r=1;
+                    move_d=0;
+                    move_u=0;
+                    move_l=0;
                 }
-                if(map_check[y+1][x]=='#'&& horizontal==0){
+                if(map_check[y+1][x]=='#'&& move_u==0){
                    while(i<5){
-                        mvprintw(0,0, "goin upward");
-                        if(map_check[y+1][x]!='#'){
-                            break;
-                        }
-                        else{
+                        mvprintw(0,0, "goin down  %d",i);
+                        if(map_check[y+1][x]=='#'){
                             y++;
                             mvprintw(y + 1, x, "%c", map->map[y][x]);
                             i++;
+                            continue;
                         }
+                        break;
                     }
-                    vertical=0;
-                    horizontal=1;
+                    move_r=0;
+                    move_d=1;
+                    move_u=0;
+                    move_l=0;
                 }
-                if(map_check[y-1][x]=='#'&&horizontal==0){
+                if(map_check[y-1][x]=='#'&&move_d==0){
                    while(i<5){
-                        mvprintw(0,0, "goin down  ");
+                        mvprintw(0,0, "goin upward%d",i);
                         if(map_check[y-1][x]!='#'){
                             break;
                         }
@@ -1489,12 +1574,14 @@ void hero_movement(Map *map, char* username){
                             i++;
                         }
                     }
-                    vertical=0;
-                    horizontal=1;
+                    move_r=0;
+                    move_d=0;
+                    move_u=1;
+                    move_l=0;
                 }
-                if(map_check[y][x-1]=='#'&&vertical==0){
+                if(map_check[y][x-1]=='#'&&move_r==0){
                   while(i<5){
-                        mvprintw(0,0, "goin left  ");
+                        mvprintw(0,0, "goin left  %d",i);
                         if(map_check[y][x-1]!='#'){
                             break;
                         }
@@ -1504,15 +1591,37 @@ void hero_movement(Map *map, char* username){
                             i++;
                         }
                     }
-                    vertical=1;
-                    horizontal=0;
+                    move_r=0;
+                    move_d=0;
+                    move_u=0;
+                    move_l=1;
                 }
-                else
+                else{
                     break;
-
+                    mvprintw(0,0, "               ");
+                }
                 i++;
             }
             
+        }
+           /* for (int i = y-5; i < y+5; i++) {
+                for (int j = x-5; j < x+5; j++) {
+                    // نمایش خانه‌ها فقط در محدوده دید بازیکن
+                    if (0<=i&& 0<=j && j<COLS &&i<LINES &&map_check[i][j]=='#') {
+                        mvprintw(0,0, "goin down  ");
+                       mvprintw(i + 1, j, "%c", map->map[i][j]); // چاپ در مکان مشخص
+                    }
+                }
+            }
+        }*/
+        else if(map_check[hero.y][hero.x]=='&'){
+            Room* room = &map->rooms[which_room(map,hero.x,hero.y)];
+            if (!code_shown) {
+                snprintf(room->password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
+                mvprintw(12, 0, "Code: %s", room->password); // نمایش رمز
+                code_shown = true; // ثبت رمز به عنوان نمایش داده شده
+                code_start_time = time(NULL); // زمان شروع نمایش رمز
+            }
         }
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -1538,4 +1647,11 @@ int which_room(Map *map, int x, int y) {
 }
 void show_rooms(Map *map,int x,int y){
     return;
+}
+void show_code_temporarily(WINDOW *win, int x, int y,char *code) {
+    mvwprintw(win, y, x, "Code: %s", code); // نمایش رمز
+    wrefresh(win);
+    sleep(30); // منتظر ماندن به مدت 30 ثانیه
+    mvwprintw(win, y, x, "             "); // پاک کردن رمز
+    wrefresh(win);
 }
