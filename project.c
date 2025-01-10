@@ -51,6 +51,8 @@ Hero hero;
 int **map_check;
 bool code_shown = false; // نشان می‌دهد که رمز فعلی نمایش داده شده یا نه
 time_t code_start_time = 0;
+bool show_full_map = false;
+int** visible;
 // Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
@@ -58,6 +60,8 @@ void connect_rooms(Map *map);
 void add_pillars_stair_traps(Map *map);
 void generate_map(Map *map, int max_width, int max_height);
 void print_map(Map *map, int max_width, int max_height,char* username);
+void print_full_map(Map *map, int max_width, int max_height,char* username);
+void display_visible_map(Map*map, int** visible);
 void create_user();
 void generate_random_password(char *password, int length);
 void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
@@ -737,16 +741,18 @@ void start_new_game(char *username) {
     Map map;
     map.map = (int **)malloc(max_height * sizeof(int *));
     map_check=(int **)malloc(max_height * sizeof(int *));
+    visible=(int **)malloc(max_height * sizeof(int *));
     for (int i = 0; i < max_height; i++) {
         map.map[i] = (int *)malloc(max_width * sizeof(int));
         map_check[i]=(int *)malloc(max_width * sizeof(int));
+        visible[i]=(int *)malloc(max_width * sizeof(int));
     }
-
     srand(time(NULL));
     generate_map(&map, max_width, max_height);
     for (int y = 0; y < max_height; y++) {
         for (int x = 0; x < max_width; x++) {
             map_check[y][x]=map.map[y][x];
+            visible[y][x]=0;
         }
     }
     print_map(&map, max_width, max_height,username);
@@ -1434,11 +1440,10 @@ void print_map(Map *map, int max_width, int max_height,char* username) {
     }
     refresh();
 }
-/*void print_map(Map *map, int max_width, int max_height,char* username) {
+void print_full_map(Map *map, int max_width, int max_height,char* username) {
     clear();
     for (int y = 0; y < max_height; y++) {
         for (int x = 0; x < max_width; x++) {
-            map_check[y][x]=map[y][x];
             if(map->map[y][x]=='9'){
                 const char* key="△";
                 mvprintw(y + 1, x, "%s",key);                
@@ -1451,7 +1456,7 @@ void print_map(Map *map, int max_width, int max_height,char* username) {
         }
     }
     refresh();
-}*/
+}
 void special_key(Map *map){
     int room_num=rand()%6;
     Room *room = &map->rooms[room_num];
@@ -1473,18 +1478,23 @@ void print_selected_room(Map *map, char* username,int room_num){
         for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
             if(map->map[y][x]=='9'){
                 const char* key="△";
-                mvprintw(y + 1, x, "%s",key);                
+                mvprintw(y + 1, x, "%s",key);
+                visible[y][x]=1;               
             }else if(map->map[y][x]=='8'){
                 const char* tale=".";
                 mvprintw(y + 1, x, "%s",tale); 
+                visible[y][x]=1; 
             }else if(map->map[y][x]=='!'){
                 const char* secret_door="|";
                 mvprintw(y + 1, x, "%s",secret_door); 
+                visible[y][x]=1; 
             }else if(map->map[y][x]=='?'){
                 const char* secret_door="-";
                 mvprintw(y + 1, x, "%s",secret_door); 
+                visible[y][x]=1; 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
+                visible[y][x]=1; 
             //map_check[y][x]=1;
         }
     }
@@ -1507,7 +1517,15 @@ void hero_movement(Map *map, char* username){
         case '1':    new_x--; new_y++; break; // حرکت به پایین-چپ (عدد 1)
         case '3':    new_x++; new_y++; break; // حرکت به پایین-راست (عدد 3)
         case '5':    break; // هیچ عملی انجام نمی‌شود (عدد 5)
-        case 'q':    endwin(); return ; // خروج با کلید q
+        case 'm':
+            show_full_map = !show_full_map; // تغییر حالت نقشه
+            clear(); // پاکسازی صفحه
+            if (show_full_map) {
+                print_full_map(map,COLS,LINES,username); // نمایش نقشه کامل
+            } else {
+                display_visible_map(map, visible); // نمایش نقشه قابل مشاهده
+            }
+            return;// خروج با کلید q
     }
 
     // بررسی حرکت معتبر
@@ -1538,6 +1556,7 @@ void hero_movement(Map *map, char* username){
                         else{
                             x++;
                             mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            visible[y][x]=1; 
                             i++;
                         }
                     }
@@ -1552,6 +1571,7 @@ void hero_movement(Map *map, char* username){
                         if(map_check[y+1][x]=='#'){
                             y++;
                             mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            visible[y][x]=1; 
                             i++;
                             continue;
                         }
@@ -1571,6 +1591,7 @@ void hero_movement(Map *map, char* username){
                         else{
                             y-=1;
                             mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            visible[y][x]=1; 
                             i++;
                         }
                     }
@@ -1588,6 +1609,7 @@ void hero_movement(Map *map, char* username){
                         else{
                             x-=1;
                             mvprintw(y + 1, x, "%c", map->map[y][x]);
+                            visible[y][x]=1; 
                             i++;
                         }
                     }
@@ -1625,6 +1647,7 @@ void hero_movement(Map *map, char* username){
         }
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+        visible[hero.y][hero.x]=1; 
     }
 }
 int is_valid_move(Map *map, int new_y, int new_x) {
@@ -1654,4 +1677,15 @@ void show_code_temporarily(WINDOW *win, int x, int y,char *code) {
     sleep(30); // منتظر ماندن به مدت 30 ثانیه
     mvwprintw(win, y, x, "             "); // پاک کردن رمز
     wrefresh(win);
+}
+void display_visible_map(Map*map, int** visible) {
+    for (int y = 0; y < LINES; y++) {
+        for (int x = 0; x < COLS; x++) {
+            if (visible[y][x]) {
+                mvaddch(y+1, x, map->map[y][x]);
+            } else {
+                mvaddch(y+1, x, ' '); // خانه‌های مخفی
+            }
+        }
+    }
 }
