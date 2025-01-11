@@ -2,10 +2,12 @@
 #include <ncursesw/ncurses.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <time.h>
 #include <wchar.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define MAX_MUSIC_TRACKS 10
 #define MAX_ROOMS 6
@@ -48,11 +50,15 @@ typedef struct {
     char color [20];
 } Hero;
 Hero hero;
+
 int **map_check;
+int** visible;
+
 bool code_shown = false; // نشان می‌دهد که رمز فعلی نمایش داده شده یا نه
 time_t code_start_time = 0;
 bool show_full_map = false;
-int** visible;
+pthread_t timer_thread;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 // Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
@@ -86,13 +92,18 @@ void secret_room(Map *map,int i);
 void password_room(Map *map,int i);
 void special_key(Map *map);
 void show_code_temporarily(WINDOW *win, int x, int y, char *code);
+void* check_code_timer(void* arg);
+
 /*void load_music(settings);*/
 void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
-void hero_movement(Map *map, char* username);
+int hero_movement(Map *map, char* username);
 int is_valid_move(Map *map, int new_y, int new_x);
 void print_selected_room(Map *map, char* username,int room_num);
 int which_room(Map *map,int x,int y);
 void show_rooms(Map *map,int x,int y);
+void kill_music();
+void play_music();
+
 int main() {
     setlocale(LC_CTYPE,"");
     initscr();
@@ -104,6 +115,10 @@ int main() {
     strcpy(settings.main_color,"Red");
     //strcpy (settings.music,"Track1");
     settings.selected_music=1;
+    if (pthread_create(&timer_thread, NULL, check_code_timer, NULL) != 0) {
+        perror("Failed to create timer thread");
+        return 1;
+    }
     int choice;
     while((choice = start_menu()) != 4) {
         clear();
@@ -117,12 +132,10 @@ int main() {
             case 2:
                 clear();
                 user_entrance_menu();
-                getch();
                 break;
             case 3:
                 clear();
                 guest_entrance();
-                getch();
                 break;
             case 4:
                 clear();
@@ -134,7 +147,7 @@ int main() {
                 break;
         }
     }
-
+    kill_music();
     endwin();
     return 0;
 }
@@ -756,20 +769,25 @@ void start_new_game(char *username) {
         }
     }
     print_map(&map, max_width, max_height,username);
+    play_music();
+    load_settings(username);
+    char quit;
+    timeout(10);
     while (1) {
         //clear();
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(12, 0, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
         }
-        hero_movement(&map,username);
+        if((quit=hero_movement(&map,username))=='q'){
+            break;
+        }
         refresh();
     }
     for (int i = 0; i < max_height; i++) {
         free(map.map[i]);
     }
     free(map.map);
-    getch();
     before_game_menu(username);
     refresh();
 }
@@ -908,14 +926,17 @@ void display_settings_menu(char *username) {
         case 1:
             clear();
             change_difficulty();
+            save_settings(username);
             break;
         case 2:
             clear();
             change_color();
+            save_settings(username);
             break;
         case 3:
             clear();
             select_music();
+            save_settings(username);
             break;
         case 4:
             save_settings(username);
@@ -1059,19 +1080,25 @@ void select_music() {
     int highlight = 1;
     int choice = 0;
     int c;
-
-    music_win = newwin(10, 40, (LINES/2)-12, (COLS/2)-3);
+    char *music[] = {
+        "Music-off",
+        "Track 1",
+        "Track 2",
+        "Track 3"
+    };
+    music_win = newwin(10, 40, (LINES/2)-2, (COLS/2)-3);
+    int n_music = sizeof(music) / sizeof(char *);
     keypad(music_win, TRUE);
     mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
     refresh();
     while(1) {
-        for (int i = 0; i < MAX_MUSIC_TRACKS; ++i) {
+        for (int i = 0; i < n_music; ++i) {
             if (highlight == i + 1) {
                 wattron(music_win, A_REVERSE);
-                mvwprintw(music_win, i + 2, 2, "%s", settings.music[i]);
+                mvwprintw(music_win, i + 2, 2, "%s", music[i]);
                 wattroff(music_win, A_REVERSE);
             } else {
-                mvwprintw(music_win, i + 2, 2, "%s", settings.music[i]);
+                mvwprintw(music_win, i + 2, 2, "%s", music[i]);
             }
         }
         wrefresh(music_win);
@@ -1080,12 +1107,12 @@ void select_music() {
         switch(c) {
             case KEY_UP:
                 if (highlight == 1)
-                    highlight = MAX_MUSIC_TRACKS;
+                    highlight = n_music;
                 else
                     --highlight;
                 break;
             case KEY_DOWN:
-                if (highlight == MAX_MUSIC_TRACKS)
+                if (highlight == n_music)
                     highlight = 1;
                 else
                     ++highlight;
@@ -1097,7 +1124,6 @@ void select_music() {
                 refresh();
                 break;
         }
-
         if (choice != 0) {
             settings.selected_music = choice - 1; // Convert to 0-based index
             mvprintw(1, 1, "Music %d selected!", settings.selected_music);
@@ -1106,11 +1132,9 @@ void select_music() {
             break;
         }
     }
-
     delwin(music_win);
+
 }
-
-
 void save_settings(const char *username) {
     char filename[60];
     snprintf(filename, sizeof(filename), "%s.txt", username);
@@ -1318,11 +1342,6 @@ void password_room(Map *map,int i){
     Room *room = &map->rooms[i];
     int px = room->x+2 + rand() % (room->width-4);
     int py = room->y+2 + rand() % (room->height-4);
-    start_color();        // فعال کردن رنگ‌ها
-    use_default_colors();
-    init_pair(1, COLOR_RED, -1);
-    init_pair(2, COLOR_GREEN, -1);
-    init_pair(3, COLOR_YELLOW, -1);
     map->map[py][px] = '&'; // دکمه تولید رمز
     /*if (player_x == password_door_x && player_y == password_door_y) {
         char input_password[5];
@@ -1339,21 +1358,21 @@ void password_room(Map *map,int i){
     }*/
     for (int x = room->x; x < room->x + room->width; x++) {
         if(map->map[room->y][x] == '+'){
-            map->map[room->y][x] = '@';
+            map->map[room->y][x] = '1';
             return;
         }
         if( map->map[room->y + room->height - 1][x] == '+'){
-            map->map[room->y + room->height - 1][x] = '@';
+            map->map[room->y + room->height - 1][x] = '1';
             return;
         }
     }
     for (int y = room->y; y < room->y + room->height; y++) {
         if(map->map[y][room->x] == '+'){
-            map->map[y][room->x] = '@';
+            map->map[y][room->x] = '1';
             return;
         }
         if(map->map[y][room->x + room->width - 1] == '+'){
-            map->map[y][room->x + room->width - 1] = '@';
+            map->map[y][room->x + room->width - 1] = '1';
             return;
         }
     }
@@ -1450,6 +1469,9 @@ void print_full_map(Map *map, int max_width, int max_height,char* username) {
             }else if(map->map[y][x]=='8'){
                 const char* key="∧";
                 mvprintw(y + 1, x, "%s",key); 
+            }else if(map->map[y][x]=='1'){
+                const char* key="@";
+                mvprintw(y + 1, x, "%s",key); 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
 
@@ -1500,7 +1522,7 @@ void print_selected_room(Map *map, char* username,int room_num){
     }
 }
 
-void hero_movement(Map *map, char* username){
+int hero_movement(Map *map, char* username){
     load_settings(username);
     strcpy(hero.color,settings.main_color);
     int ch = getch(); // کلید ورودی را بگیر
@@ -1525,7 +1547,7 @@ void hero_movement(Map *map, char* username){
             } else {
                 display_visible_map(map, visible); // نمایش نقشه قابل مشاهده
             }
-            return;// خروج با کلید q
+            return ch;// خروج با کلید q
     }
 
     // بررسی حرکت معتبر
@@ -1638,17 +1660,25 @@ void hero_movement(Map *map, char* username){
         }*/
         else if(map_check[hero.y][hero.x]=='&'){
             Room* room = &map->rooms[which_room(map,hero.x,hero.y)];
+            pthread_mutex_lock(&mutex);
             if (!code_shown) {
                 snprintf(room->password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
-                mvprintw(12, 0, "Code: %s", room->password); // نمایش رمز
+                mvprintw(0,COLS-9, "Code: %s", room->password); // نمایش رمز
                 code_shown = true; // ثبت رمز به عنوان نمایش داده شده
                 code_start_time = time(NULL); // زمان شروع نمایش رمز
             }
+            pthread_mutex_unlock(&mutex);
+            refresh();
+        }
+        else if(map_check[hero.y][hero.x]=='1'){
+            
+
         }
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
         visible[hero.y][hero.x]=1; 
     }
+    return ch;
 }
 int is_valid_move(Map *map, int new_y, int new_x) {
     char target = map->map[new_y][new_x];
@@ -1688,4 +1718,45 @@ void display_visible_map(Map*map, int** visible) {
             }
         }
     }
+}
+void play_music()
+{
+	char command[256];
+
+	kill_music();
+	if (settings.selected_music == 0)
+	{
+		return;
+	}
+	if (settings.selected_music == 1)
+	{
+		snprintf(command, sizeof(command), "mpg123 1.mp3 > /dev/null 2>&1 &");
+	}
+	else if (settings.selected_music == 2)
+	{
+		snprintf(command, sizeof(command), "mpg123 2.mp3 > /dev/null 2>&1 &");
+	}
+	else if (settings.selected_music == 3)
+	{
+		snprintf(command, sizeof(command), "mpg123 3.mp3 > /dev/null 2>&1 &");
+	}
+	system(command);
+}
+void kill_music()
+{
+	char command[256];
+	snprintf(command, sizeof(command), "pkill mpg123");
+	system(command);
+}
+void* check_code_timer(void* arg) {
+    while (1) {
+        pthread_mutex_lock(&mutex); // قفل کردن برای دسترسی امن به متغیرها
+        if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
+            mvprintw(12, 0, "              "); // پاک کردن پیام
+            code_shown = false; // غیرفعال کردن نمایش رمز
+        }
+        pthread_mutex_unlock(&mutex); // آزاد کردن قفل
+        usleep(100000); // خواب 100 میلی‌ثانیه برای کاهش مصرف پردازنده
+    }
+    return NULL;
 }
