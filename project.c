@@ -1305,7 +1305,7 @@ void connect_rooms(Map *map) {
             }
             y1 += (y2 > y1) ? 1 : -1;
         }
-        if(way_len<10){
+        if(way_len<16){
             int max_width, max_height;
             getmaxyx(stdscr, max_height, max_width);
             generate_map(map,max_width,max_height);
@@ -1554,6 +1554,15 @@ int hero_movement(Map *map, char* username){
         case '1':    new_x--; new_y++; break; // حرکت به پایین-چپ (عدد 1)
         case '3':    new_x++; new_y++; break; // حرکت به پایین-راست (عدد 3)
         case '5':    break; // هیچ عملی انجام نمی‌شود (عدد 5)
+        case 'm':
+            show_full_map = !show_full_map; // تغییر حالت نقشه
+            clear(); // پاکسازی صفحه
+            if (show_full_map) {
+                print_full_map(map,COLS,LINES,username); // نمایش نقشه کامل
+            } else {
+                display_visible_map(map, visible); // نمایش نقشه قابل مشاهده
+            }
+            return ch;// خروج با کلید q
         case 'f':   
             timeout(-1);
             int ch_func=getch();
@@ -1700,33 +1709,36 @@ int hero_movement(Map *map, char* username){
             return ch;
 
         case 'g':
+            timeout(-1);
             int grab_func = getch(); // کلید ورودی را بگیر
-            int new_x = hero.x, new_y = hero.y;
-            int last_x=hero.x, last_y = hero.y;
             // حرکت براساس کلید عددی
             switch (grab_func) {
                 case '8':    new_y--; can_grab=0; break; // حرکت به بالا (عدد 8)
                 case '2':    new_y++; can_grab=0; break; // حرکت به پایین (عدد 2)
                 case '4':    new_x--; can_grab=0; break; // حرکت به چپ (عدد 4)
                 case '6':    new_x++; can_grab=0; break; // حرکت به راست (عدد 6)
-                case '7':    new_x--; can_grab=0; new_y--; break; // حرکت به بالا-چپ (عدد 7)
+                case '7':    new_x--; new_y--; can_grab=0; break; // حرکت به بالا-چپ (عدد 7)
                 case '9':    new_x++; new_y--; can_grab=0; break; // حرکت به بالا-راست (عدد 9)
                 case '1':    new_x--; new_y++; can_grab=0; break; // حرکت به پایین-چپ (عدد 1)
                 case '3':    new_x++; new_y++; can_grab=0; break; // حرکت به پایین-راست (عدد 3)
-                default:
-                    break;
             }
-        case 'm':
-            show_full_map = !show_full_map; // تغییر حالت نقشه
-            clear(); // پاکسازی صفحه
-            if (show_full_map) {
-                print_full_map(map,COLS,LINES,username); // نمایش نقشه کامل
-            } else {
-                display_visible_map(map, visible); // نمایش نقشه قابل مشاهده
+            break;
+        case 's':
+            timeout(-1);
+            for(int i=hero.y-1;i<=hero.y+1;i++){
+                for(int j=hero.x-1;j<=hero.x+1;j++){
+                    if(map_check[i][j]=='8'){
+                        const char* key="∧";
+                        mvprintw(i + 1, j, "%s",key);
+                    }else if(map_check[i][j]=='!'){
+                        mvprintw(i + 1, j, "?"); 
+                    }else if(map_check[i][j]=='?'){
+                        mvprintw(i + 1, j, "?");                    
+                    }
+                }
             }
-            return ch;// خروج با کلید q
+            break;
     }
-
     // بررسی حرکت معتبر
     if (is_valid_move(map, new_y, new_x)) {    
         map->map[hero.y][hero.x] = map_check[hero.y][hero.x]; // جای قبلی بازیکن را پاک کن
@@ -1941,9 +1953,8 @@ int hero_movement(Map *map, char* username){
                 hero.y = last_y;
             }
         }
-        else if(map_check[hero.y][hero.x]=='9'){
-            mvprintw(0,0,"KEY GRABED!");
-            napms(2000); 
+        else if(map_check[hero.y][hero.x]=='9'&& can_grab==1){
+            mvprintw(0,0,"KEY GRABED!                                              ");
             hero.has_key=1;
             map_check[hero.y][hero.x]='.';
             map->map[hero.y][hero.x]= '.';
@@ -1956,7 +1967,6 @@ int hero_movement(Map *map, char* username){
             map_check[hero.y][hero.x]='t';
             map->map[hero.y][hero.x]= 't';            
         }
-       // mvprintw(0,0, "                                                                                                       ");
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
         visible[hero.y][hero.x]=1; 
