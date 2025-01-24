@@ -8,11 +8,15 @@
 #include <wchar.h>
 #include <unistd.h>
 #include <pthread.h>
-
+//------------
 #define MAX_MUSIC_TRACKS 10
 #define MAX_ROOMS 6
 #define ROOM_MIN_WIDTH 6
 #define ROOM_MIN_HEIGHT 6
+#define MAX_ATTEMPTS 3 
+#define COLOR_ORANGE 16
+#define COLOR_yellow 15
+//------------
 int move_u=0;
 int move_d=0;
 int move_r=0;
@@ -37,9 +41,9 @@ typedef struct {
     int has_password_door;   // آیا اتاق دارای در رمزدار است؟
     char password[6];        // رمز در صورتی که رمزدار باشد
     int has_master_key;      // آیا کلید خاص در اتاق وجود دارد؟
-    int master_key_used;     // آیا این کلید استفاده شده است؟
+    int master_key_used;   
+    int opend;  // آیا این کلید استفاده شده است؟
 } Room;
-
 typedef struct {
     Room rooms[MAX_ROOMS];
     int room_count;
@@ -48,9 +52,11 @@ typedef struct {
 typedef struct {
     int x ,y;
     char color [20];
+    int has_key;
+    int has_broken_key;
+    int health;
 } Hero;
 Hero hero;
-
 int **map_check;
 int** visible;
 
@@ -59,7 +65,7 @@ time_t code_start_time = 0;
 bool show_full_map = false;
 pthread_t timer_thread;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-// Function declarations
+//------------// Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
 void connect_rooms(Map *map);
@@ -103,10 +109,12 @@ int which_room(Map *map,int x,int y);
 void show_rooms(Map *map,int x,int y);
 void kill_music();
 void play_music();
-
+void print_colored_massage(char *message, int color_pair);
+//------------
 int main() {
     setlocale(LC_CTYPE,"");
     initscr();
+    start_color();
     clear();
     noecho();
     cbreak();  // Line buffering disabled. pass on everything
@@ -776,7 +784,7 @@ void start_new_game(char *username) {
     while (1) {
         //clear();
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
-                mvprintw(12, 0, "              "); // پاک کردن پیام
+                mvprintw(0,COLS-10, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
         }
         if((quit=hero_movement(&map,username))=='q'){
@@ -1207,9 +1215,6 @@ void create_room(Room *room, int max_width, int max_height) {
     room->y = rand() % (max_height - room->height - 2) + 2;
     if (rand() % 3 == 0) { // 25% احتمال برای در مخفی
         room->has_secret_door = 1;
-    } else if (rand() % 3 == 0) { // 20% احتمال برای در رمزدار
-        room->has_password_door = 1;
-        snprintf(room->password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
     }
 }
 
@@ -1257,6 +1262,9 @@ void place_rooms(Map *map, int max_width, int max_height) {
         */
        }
     }
+    map->rooms[2].has_password_door=1;
+    map->rooms[2].opend=0;
+    snprintf(map->rooms[2].password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
 }
 
 void connect_rooms(Map *map) {
@@ -1393,12 +1401,12 @@ void add_pillars_stair_traps(Map *map) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = '8'; // ستون
+                map->map[py][px] = '8'; // trap
             }
         }
     }
     Room *room = &map->rooms[0];
-    map->map[3][3] = '<'; // ستون
+    map->map[3][3] = '<'; // stair
 
 }
 
@@ -1451,6 +1459,8 @@ void print_map(Map *map, int max_width, int max_height,char* username) {
                 place_hero=1;
                 hero.x=x;
                 hero.y=y;
+                hero.has_key=0;
+                hero.has_broken_key=0;
                 break;                
             }
         }
@@ -1514,6 +1524,10 @@ void print_selected_room(Map *map, char* username,int room_num){
                 const char* secret_door="-";
                 mvprintw(y + 1, x, "%s",secret_door); 
                 visible[y][x]=1; 
+            }else if(map->map[y][x]=='t'){
+                const char* visible_trap="∧";
+                mvprintw(y + 1, x, "%s",visible_trap); 
+                visible[y][x]=1; 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
                 visible[y][x]=1; 
@@ -1527,7 +1541,8 @@ int hero_movement(Map *map, char* username){
     strcpy(hero.color,settings.main_color);
     int ch = getch(); // کلید ورودی را بگیر
     int new_x = hero.x, new_y = hero.y;
-
+    int last_x=hero.x, last_y = hero.y;
+    int can_grab=1;
     // حرکت براساس کلید عددی
     switch (ch) {
         case '8':    new_y--; break; // حرکت به بالا (عدد 8)
@@ -1539,6 +1554,168 @@ int hero_movement(Map *map, char* username){
         case '1':    new_x--; new_y++; break; // حرکت به پایین-چپ (عدد 1)
         case '3':    new_x++; new_y++; break; // حرکت به پایین-راست (عدد 3)
         case '5':    break; // هیچ عملی انجام نمی‌شود (عدد 5)
+        case 'f':   
+            timeout(-1);
+            int ch_func=getch();
+            switch (ch_func){
+                case '8': // حرکت به بالا
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x]; // جای قبلی بازیکن را پاک کن
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_y--;
+                    }
+                    new_y += 2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '2': // حرکت به پایین
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_y++;
+                    }
+                    new_y -= 2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '4': // حرکت به چپ
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_x--;
+                    }
+                    new_x += 2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '6': // حرکت به راست
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_x++;
+                    }
+                    new_x -= 2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '7': // حرکت به بالا-چپ
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_x--;
+                        new_y--;
+                    }
+                    new_x+=2;
+                    new_y+=2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '9': // حرکت به بالا-راست
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_x++;
+                        new_y--;
+                    }
+                    new_x-=2;
+                    new_y+=2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '1': // حرکت به پایین-چپ
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_x--;
+                        new_y++;
+                    }
+                    new_x+2;
+                    new_y-=2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                case '3': // حرکت به پایین-راست
+                    while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
+                        hero.x = new_x;
+                        hero.y = new_y;
+                        map->map[hero.y][hero.x] = map_check[hero.y][hero.x];
+                        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                        visible[hero.y][hero.x] = 1;
+                        new_x++;
+                        new_y++;
+                    }
+                    new_x-=2;
+                    new_y-=2;
+                    hero.x = new_x;
+                    hero.y = new_y;
+                    map->map[hero.y][hero.x] = 'H';
+                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                    break;
+
+                default:
+                    break;
+            }
+            return ch;
+
+        case 'g':
+            int grab_func = getch(); // کلید ورودی را بگیر
+            int new_x = hero.x, new_y = hero.y;
+            int last_x=hero.x, last_y = hero.y;
+            // حرکت براساس کلید عددی
+            switch (grab_func) {
+                case '8':    new_y--; can_grab=0; break; // حرکت به بالا (عدد 8)
+                case '2':    new_y++; can_grab=0; break; // حرکت به پایین (عدد 2)
+                case '4':    new_x--; can_grab=0; break; // حرکت به چپ (عدد 4)
+                case '6':    new_x++; can_grab=0; break; // حرکت به راست (عدد 6)
+                case '7':    new_x--; can_grab=0; new_y--; break; // حرکت به بالا-چپ (عدد 7)
+                case '9':    new_x++; new_y--; can_grab=0; break; // حرکت به بالا-راست (عدد 9)
+                case '1':    new_x--; new_y++; can_grab=0; break; // حرکت به پایین-چپ (عدد 1)
+                case '3':    new_x++; new_y++; can_grab=0; break; // حرکت به پایین-راست (عدد 3)
+                default:
+                    break;
+            }
         case 'm':
             show_full_map = !show_full_map; // تغییر حالت نقشه
             clear(); // پاکسازی صفحه
@@ -1659,11 +1836,19 @@ int hero_movement(Map *map, char* username){
             }
         }*/
         else if(map_check[hero.y][hero.x]=='&'){
+            timeout(10);
             Room* room = &map->rooms[which_room(map,hero.x,hero.y)];
             pthread_mutex_lock(&mutex);
             if (!code_shown) {
                 snprintf(room->password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
-                mvprintw(0,COLS-9, "Code: %s", room->password); // نمایش رمز
+                char reverse_password[4];
+                strcpy(reverse_password,room->password);
+                if(rand()%6==0){
+                    for(int i=0;i<4;i++){
+                        reverse_password[i]=room->password[3-i];
+                    }
+                }
+                mvprintw(0,COLS-10, "Code: %s", reverse_password); // نمایش رمز
                 code_shown = true; // ثبت رمز به عنوان نمایش داده شده
                 code_start_time = time(NULL); // زمان شروع نمایش رمز
             }
@@ -1671,14 +1856,124 @@ int hero_movement(Map *map, char* username){
             refresh();
         }
         else if(map_check[hero.y][hero.x]=='1'){
-            
+            mvprintw(last_y + 1, last_x,"H");
+            mvprintw(0,COLS-10, "          ");
+            mvprintw(0,0, "                                                                     ");
+            mvprintw(0,0, "Enter code:");
+            char input[10]; // ذخیره ورودی کاربر
+            int attempts = 1;
+            cbreak();
+            keypad(stdscr, TRUE);
+            Room* room = &map->rooms[which_room(map,hero.x,hero.y)];
+            while (room->opend==0 && attempts <= MAX_ATTEMPTS) {
+                if(hero.has_key==1){
+                    if(rand()%10==0){
+                        hero.has_key-=1;
+                        hero.has_broken_key+=1;
+                        mvprintw(0,0,"KEY BREAK! You have %d KEY.",hero.has_key);
+                        napms(2000); 
+                    }
+                    else{
+                        init_pair(4,COLOR_GREEN,COLOR_BLACK);
+                        attron(COLOR_PAIR(4));
+                        mvprintw(0,0,"Door unlocked by key! You may proceed.");
+                        refresh();
+                        attroff(COLOR_PAIR(4));
+                        napms(2000); 
+                        room->opend=1;
+                        hero.has_key-=1;
+                        break;
+                    }
+                }
+                mvprintw(0,0, "                                                                                                       ");
+                mvprintw(0,0, "Enter code:");
+                echo();
+                curs_set(1);
+                timeout(-1);
+                mvgetnstr(0, 12, input, 4); // ورودی کاربر با طول محدود
+                noecho();
+                curs_set(0);
+                if (strcmp(input, room->password) == 0) {
+                    init_pair(4,COLOR_GREEN,COLOR_BLACK);
+                    attron(COLOR_PAIR(4));
+                    mvprintw(0,17,"Door unlocked by code! You may proceed.");
+                    refresh();
+                    attroff(COLOR_PAIR(4));
+                    napms(2000); 
+                    room->opend=1;
+                    break;
+                } else {
+                        if(attempts==1){
+                            init_pair(1,COLOR_YELLOW,COLOR_BLACK);
+                            attron(COLOR_PAIR(1));
+                            mvprintw(0,17,"EROR(Two left)");
+                            refresh();
+                            attroff(COLOR_PAIR(1));
+                            napms(2000);
+                        }
+                        else if(attempts==2){
+                            init_pair(2,COLOR_RED,COLOR_YELLOW);
+                            attron(COLOR_PAIR(2));
+                            mvprintw(0,17,"EROR(one left)");
+                            refresh();
+                            attroff(COLOR_PAIR(2));
+                            napms(2000);
+                        }
+                        else if(attempts==3){
+                            init_pair(3,COLOR_RED,COLOR_BLACK);
+                            attron(COLOR_PAIR(3));
+                            mvprintw(0,17,"EROR(SECURITY MODE)");
+                            refresh();
+                            attroff(COLOR_PAIR(3));
+                            napms(2000);    
+                        }
+                        attempts++;
+                }
+                mvprintw(0,0, "                                                                                                       ");
 
+            }
+            if(room->opend==1){
+                mvprintw(last_y + 1, last_x, "%c", map->map[last_y][last_x]);
+                map_check[hero.y][hero.x]='2';
+            }
+            else{
+                hero.x = last_x;
+                hero.y = last_y;
+            }
         }
+        else if(map_check[hero.y][hero.x]=='9'){
+            mvprintw(0,0,"KEY GRABED!");
+            napms(2000); 
+            hero.has_key=1;
+            map_check[hero.y][hero.x]='.';
+            map->map[hero.y][hero.x]= '.';
+        }
+        else if(map_check[hero.y][hero.x]=='8'){
+            map_check[hero.y][hero.x]='t';
+            map->map[hero.y][hero.x]= 't';            
+        }
+        else if(map_check[hero.y][hero.x]=='>'){
+            map_check[hero.y][hero.x]='t';
+            map->map[hero.y][hero.x]= 't';            
+        }
+       // mvprintw(0,0, "                                                                                                       ");
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
         visible[hero.y][hero.x]=1; 
     }
     return ch;
+}
+void print_colored_massage(char *message, int color_pair){
+    //init_color(COLOR_ORANGE, 500, 270, 0);
+    init_color(COLOR_yellow, 1000,900, 0);
+    init_pair(2, COLOR_yellow, COLOR_BLACK); // رنگ هشدار زرد
+    init_pair(1, COLOR_ORANGE, COLOR_BLACK); 
+    init_pair(3, COLOR_GREEN, COLOR_BLACK);  // رنگ موفقیت سبز
+    attron(COLOR_PAIR(2));
+    mvprintw(0,17,"%s", message);
+    mvprintw(1,0, "%d",color_pair);
+    attroff(COLOR_PAIR(2));
+    refresh();
 }
 int is_valid_move(Map *map, int new_y, int new_x) {
     char target = map->map[new_y][new_x];
