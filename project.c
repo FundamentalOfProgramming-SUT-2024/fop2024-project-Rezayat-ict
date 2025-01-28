@@ -16,11 +16,18 @@
 #define MAX_ATTEMPTS 3 
 #define COLOR_ORANGE 16
 #define COLOR_yellow 15
+#define MAX_FOOD_INVENTORY 5  // حداکثر تعداد غذاهایی که بازیکن می‌تواند حمل کند
+#define MAX_GOLD 5
 //------------
 int move_u=0;
 int move_d=0;
 int move_r=0;
 int move_l=0;
+typedef struct {
+    int x, y;
+    int value;
+    int collected;
+} GoldBag;
 typedef struct {
     int difficulty;
     char main_color[20];
@@ -34,7 +41,15 @@ typedef struct {
     int games_played;
     time_t first_game_time;
 } Player;
-Settings settings;
+typedef struct {
+    char name[20];  // نام غذا
+    int health_restore;  // مقدار افزایش سلامتی
+    int hunger_restore;  // کاهش گرسنگی
+    int is_noraml;
+    int is_special;
+    int is_magic;  // آیا جادویی است؟
+    int is_poisoned;  // آیا فاسد است؟
+} Food;
 typedef struct {
     int x, y, width, height; // موقعیت و اندازه اتاق
     int has_secret_door;     // آیا اتاق دارای در مخفی است؟
@@ -48,6 +63,7 @@ typedef struct {
     Room rooms[MAX_ROOMS];
     int room_count;
     int **map;
+    int floor;
 } Map;
 typedef struct {
     int x ,y;
@@ -55,11 +71,38 @@ typedef struct {
     int has_key;
     int has_broken_key;
     int health;
+    int inventory[4];  // لیستی از غذاهایی که بازیکن دارد
+    int food_count;  // تعداد غذاهای حمل شده
+    int hunger;
+    int gold;
+    int weapon[5];
+    int using_weapon;
+    int spell[3];
 } Hero;
-Hero hero;
+
 int **map_check;
 int** visible;
+int **map_check_floor_2;
+int** visible_floor_2;
+int **map_check_floor_3;
+int** visible_floor_3;
+int **map_check_floor_4;
+int** visible_floor_4;
+int current_floor ;
+int ***visible_ptr;
+int ***map_check_ptr;
+int ***map_check_ptr_floor1;
+int ***visible_ptr_floor1;
 
+GoldBag gold[10];
+Settings settings;
+Hero hero;
+Map map;
+Map map_floor_2;
+Map map_floor_3;
+Map map_floor_4;
+Map *map_ptr;
+Map *map_ptr_floor1;
 bool code_shown = false; // نشان می‌دهد که رمز فعلی نمایش داده شده یا نه
 time_t code_start_time = 0;
 bool show_full_map = false;
@@ -102,14 +145,20 @@ void* check_code_timer(void* arg);
 
 /*void load_music(settings);*/
 void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
-int hero_movement(Map *map, char* username);
+int hero_movement(Map *map,int***map_check_ptr,int***visible_ptr,char* username);
+void move_between_floors(int direction,char*username);
 int is_valid_move(Map *map, int new_y, int new_x);
-void print_selected_room(Map *map, char* username,int room_num);
+void print_selected_room(Map *map, char* username,int room_num,int** visible);
 int which_room(Map *map,int x,int y);
 void show_rooms(Map *map,int x,int y);
 void kill_music();
 void play_music();
 void print_colored_massage(char *message, int color_pair);
+
+void add_food_to_hero();
+void food_menu();
+/*void consume_food(int index);
+void show_food_inventory(hero);*/
 //------------
 int main() {
     setlocale(LC_CTYPE,"");
@@ -120,6 +169,7 @@ int main() {
     cbreak();  // Line buffering disabled. pass on everything
     curs_set(0);
     settings.difficulty=1;
+    current_floor =1;
     strcpy(settings.main_color,"Red");
     //strcpy (settings.music,"Track1");
     settings.selected_music=1;
@@ -753,27 +803,81 @@ void start_new_game(char *username) {
         getch();
         return;
     }
-
+    hero.food_count=0;
+    hero.health=10;
+    hero.inventory[0]=0;
+    hero.inventory[1]=0;
+    hero.inventory[2]=0;
+    hero.inventory[3]=0;
+    hero.weapon[0]=1;
+    hero.weapon[1]=0;
+    hero.weapon[2]=0;
+    hero.weapon[3]=0;
+    hero.weapon[4]=0;
+    hero.using_weapon=0;
+    hero.spell[0]=0;
+    hero.spell[1]=0;
+    hero.spell[2]=0;
     // Save the initial game state
     fprintf(file, "New game started\n");
     fclose(file);
     int max_width, max_height;
     getmaxyx(stdscr, max_height, max_width);
-    Map map;
     map.map = (int **)malloc(max_height * sizeof(int *));
     map_check=(int **)malloc(max_height * sizeof(int *));
     visible=(int **)malloc(max_height * sizeof(int *));
+
+    map_floor_2.map = (int **)malloc(max_height * sizeof(int *));
+    map_check_floor_2=(int **)malloc(max_height * sizeof(int *));
+    visible_floor_2=(int **)malloc(max_height * sizeof(int *));
+
+    map_floor_3.map = (int **)malloc(max_height * sizeof(int *));
+    map_check_floor_3=(int **)malloc(max_height * sizeof(int *));
+    visible_floor_3=(int **)malloc(max_height * sizeof(int *));
+
+    map_floor_4.map = (int **)malloc(max_height * sizeof(int *));
+    map_check_floor_4=(int **)malloc(max_height * sizeof(int *));
+    visible_floor_4=(int **)malloc(max_height * sizeof(int *));
+
+    map.floor=1;
+    map_floor_2.floor=2;
+    map_floor_3.floor=3;
+    map_floor_4.floor=4;
     for (int i = 0; i < max_height; i++) {
         map.map[i] = (int *)malloc(max_width * sizeof(int));
-        map_check[i]=(int *)malloc(max_width * sizeof(int));
-        visible[i]=(int *)malloc(max_width * sizeof(int));
+        map_check[i] = (int *)malloc(max_width * sizeof(int));
+        visible[i] = (int *)malloc(max_width * sizeof(int));
+
+        map_floor_2.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check_floor_2[i] = (int *)malloc(max_width * sizeof(int));
+        visible_floor_2[i] = (int *)malloc(max_width * sizeof(int));
+
+        map_floor_3.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check_floor_3[i] = (int *)malloc(max_width * sizeof(int));
+        visible_floor_3[i] = (int *)malloc(max_width * sizeof(int));
+
+        map_floor_4.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check_floor_4[i] = (int *)malloc(max_width * sizeof(int));
+        visible_floor_4[i] = (int *)malloc(max_width * sizeof(int));
     }
     srand(time(NULL));
     generate_map(&map, max_width, max_height);
+    generate_map(&map_floor_2, max_width, max_height);
+    generate_map(&map_floor_3, max_width, max_height);
+    generate_map(&map_floor_4, max_width, max_height);
     for (int y = 0; y < max_height; y++) {
         for (int x = 0; x < max_width; x++) {
             map_check[y][x]=map.map[y][x];
             visible[y][x]=0;
+
+            map_check_floor_2[y][x]=map_floor_2.map[y][x];
+            visible_floor_2[y][x]=0;
+
+            map_check_floor_3[y][x]=map_floor_3.map[y][x];
+            visible_floor_3[y][x]=0;
+
+            map_check_floor_4[y][x]=map_floor_4.map[y][x];
+            visible_floor_4[y][x]=0;
         }
     }
     print_map(&map, max_width, max_height,username);
@@ -781,13 +885,22 @@ void start_new_game(char *username) {
     load_settings(username);
     char quit;
     timeout(10);
+
+    map_ptr=&map;
+    map_ptr_floor1=&map;
+
+    map_check_ptr=&map_check;
+    map_check_ptr_floor1=&map_check;
+
+    visible_ptr=&visible;
+    visible_ptr_floor1=&visible;
     while (1) {
         //clear();
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(0,COLS-10, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
         }
-        if((quit=hero_movement(&map,username))=='q'){
+        if((quit=hero_movement(map_ptr,map_check_ptr,visible_ptr,username))=='q'){
             break;
         }
         refresh();
@@ -1262,9 +1375,16 @@ void place_rooms(Map *map, int max_width, int max_height) {
         */
        }
     }
-    map->rooms[2].has_password_door=1;
-    map->rooms[2].opend=0;
-    snprintf(map->rooms[2].password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
+    if(map->floor==1){
+        map->rooms[2].has_password_door=1;
+        map->rooms[2].opend=0;
+        snprintf(map->rooms[2].password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی
+    }
+    else{
+        map->rooms[0].has_password_door=1;
+        map->rooms[0].opend=0;
+        snprintf(map->rooms[0].password, 6, "%04d", rand() % 10000); // تولید رمز 4 رقمی        
+    }
 }
 
 void connect_rooms(Map *map) {
@@ -1404,6 +1524,83 @@ void add_pillars_stair_traps(Map *map) {
                 map->map[py][px] = '8'; // trap
             }
         }
+        for (int j = 0; j < 3; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'F'; // FOOD
+            }
+        }
+        for (int j = 0; j <rand()%3; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = '$'; // GOLD
+            }
+        }
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'G'; // GOLD
+            }
+        }
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'M'; // (Mace)
+            }
+        } 
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'D'; // (Dagger):
+            }
+        }     
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'W'; // (Magic Wand)
+            }
+        }    
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'A'; // (Normal Arrow)
+            }
+        }  
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'S'; // :(Sword)
+            }
+        }  
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'h'; // :(health spell)
+            }
+        } 
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 's'; // :(speed spell)
+            }
+        } 
+        for (int j = 0; j <rand()%2; j++) {
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            if (map->map[py][px] == '.') {
+                map->map[py][px] = 'd'; // :(damage spell)
+            }
+        } 
     }
     Room *room = &map->rooms[0];
     map->map[3][3] = '<'; // stair
@@ -1423,12 +1620,20 @@ void generate_map(Map *map, int max_width, int max_height) {
     for (int i = 0; i < map->room_count; i++) {
         Room *room = &map->rooms[i];
         for (int y = room->y; y < room->y + room->height; y++) {
+            if(map->map[y][room->x] == '#')
+                map->map[y][room->x] = '+';
+            if(map->map[y][room->x + room->width - 1] == '#')
+                map->map[y][room->x + room->width - 1] = '+';            
             if(map->map[y][room->x] != '+')
                 map->map[y][room->x] = '|';
             if(map->map[y][room->x + room->width - 1] != '+')
                 map->map[y][room->x + room->width - 1] = '|';
         }
         for (int x = room->x; x < room->x + room->width; x++) {
+            if(map->map[room->y][x] == '#')
+                map->map[room->y][x] = '+';
+            if( map->map[room->y + room->height - 1][x] == '#')
+                map->map[room->y + room->height - 1][x] = '+';
             if(map->map[room->y][x] != '+')
                 map->map[room->y][x] = '-';
             if( map->map[room->y + room->height - 1][x] != '+')
@@ -1448,24 +1653,47 @@ void generate_map(Map *map, int max_width, int max_height) {
 
 void print_map(Map *map, int max_width, int max_height,char* username) {
     clear();
-    print_selected_room(map,username,2);
-    Room selected_room=map->rooms[2];
-    int place_hero=0;
-    for (int y = selected_room.y; y < selected_room.y + selected_room.height; y++) {
-        for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
-            if(map->map[y][x]=='.'){
-                map->map[y][x]='H';
-                mvprintw(y + 1, x, "%c",map->map[y][x]);
-                place_hero=1;
-                hero.x=x;
-                hero.y=y;
-                hero.has_key=0;
-                hero.has_broken_key=0;
-                break;                
+    if(map->floor==1){
+        print_selected_room(map,username,2,visible);
+        Room selected_room=map->rooms[2];
+        int place_hero=0;
+        for (int y = selected_room.y; y < selected_room.y + selected_room.height; y++) {
+            for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
+                if(map->map[y][x]=='.'){
+                    map->map[y][x]='H';
+                    mvprintw(y + 1, x, "%c",map->map[y][x]);
+                    place_hero=1;
+                    hero.x=x;
+                    hero.y=y;
+                    hero.has_key=0;
+                    hero.has_broken_key=0;
+                    break;                
+                }
             }
+            if(place_hero==1)
+                break;
         }
-        if(place_hero==1)
-            break;
+    }
+    else{
+        print_selected_room(map,username,0,visible);
+        Room selected_room=map->rooms[0];
+        int place_hero=0;
+        for (int y = selected_room.y; y < selected_room.y + selected_room.height; y++) {
+            for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
+                if(map->map[y][x]=='<'){
+                    map->map[y][x]='H';
+                    mvprintw(y + 1, x, "%c",map->map[y][x]);
+                    place_hero=1;
+                    hero.x=x;
+                    hero.y=y;
+                    hero.has_key=0;
+                    hero.has_broken_key=0;
+                    break;                
+                }
+            }
+            if(place_hero==1)
+                break;
+        }        
     }
     refresh();
 }
@@ -1482,6 +1710,10 @@ void print_full_map(Map *map, int max_width, int max_height,char* username) {
             }else if(map->map[y][x]=='1'){
                 const char* key="@";
                 mvprintw(y + 1, x, "%s",key); 
+            }else if(map->map[y][x]=='G'){
+                const char* black_gold="€";
+                mvprintw(y + 1, x, "%s",black_gold); 
+                visible[y][x]=1; 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
 
@@ -1503,7 +1735,7 @@ void special_key(Map *map){
         }
     }
 }
-void print_selected_room(Map *map, char* username,int room_num){
+void print_selected_room(Map *map, char* username,int room_num,int**visible){
     Room selected_room;
     selected_room=map->rooms[room_num];
     for (int y = selected_room.y; y < selected_room.y + selected_room.height; y++) {
@@ -1528,6 +1760,14 @@ void print_selected_room(Map *map, char* username,int room_num){
                 const char* visible_trap="∧";
                 mvprintw(y + 1, x, "%s",visible_trap); 
                 visible[y][x]=1; 
+            }else if(map->map[y][x]=='F'){
+                const char* food="F";
+                mvprintw(y + 1, x, "%s",food); 
+                visible[y][x]=1; 
+            }else if(map->map[y][x]=='G'){
+                const char* black_gold="€";
+                mvprintw(y + 1, x, "%s",black_gold); 
+                visible[y][x]=1; 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
                 visible[y][x]=1; 
@@ -1536,8 +1776,10 @@ void print_selected_room(Map *map, char* username,int room_num){
     }
 }
 
-int hero_movement(Map *map, char* username){
+int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* username){
     load_settings(username);
+    int** map_check=*map_check_ptrr;
+    int** visible=*visible_ptrr;
     strcpy(hero.color,settings.main_color);
     int ch = getch(); // کلید ورودی را بگیر
     int new_x = hero.x, new_y = hero.y;
@@ -1737,7 +1979,51 @@ int hero_movement(Map *map, char* username){
                     }
                 }
             }
+            getch();
             break;
+        case 'E':
+            food_menu();
+            display_visible_map(map,visible);
+            break;
+        case 'i':
+            clear();
+            timeout(-1);
+            const char* mace="⚒";
+            mvprintw(5, 3, "%s",mace); 
+            const char* Dagger="🗡";
+            mvprintw(6, 3, "%s",Dagger); 
+            const char* Magic_Wand="🪄";
+            mvprintw(7, 3, "%s",Magic_Wand); 
+            const char* Normal_Arrow="➳";
+            mvprintw(8, 3, "%s",Normal_Arrow); 
+            const char* Sword="⚔";
+            mvprintw(9,3, "%s",Sword);
+
+            mvprintw(5,5, "(Mace):%d",hero.weapon[0]);
+            mvprintw(6,5, "(Dagger):%d",hero.weapon[1]);
+            mvprintw(7,5, "(Magic Wand):%d",hero.weapon[2]);
+            mvprintw(8,5, "(Normal Arrow):%d",hero.weapon[3]);
+            mvprintw(9,5, "(Sword):%d",hero.weapon[4]);
+            getch();
+            display_visible_map(map,visible);
+            break;
+         case 'p':
+            clear();
+            timeout(-1);
+            const char* healt_spell="💖";
+            mvprintw(5, 3, "%s",healt_spell); 
+            const char* speed_spell="✨";
+            mvprintw(6, 3, "%s",speed_spell); 
+            const char* damge_spell="☠️";
+            mvprintw(7, 3, "%s",damge_spell); 
+
+            mvprintw(5,5, "(Mace):%d",hero.spell[0]);
+            mvprintw(6,5, "(Dagger):%d",hero.spell[1]);
+            mvprintw(7,5, "(Magic Wand):%d",hero.spell[2]);
+
+            getch();
+            display_visible_map(map,visible);
+            break;           
     }
     // بررسی حرکت معتبر
     if (is_valid_move(map, new_y, new_x)) {    
@@ -1747,7 +2033,7 @@ int hero_movement(Map *map, char* username){
         hero.y = new_y;
         if(map->map[hero.y][hero.x]=='.'){
             mvprintw(0,0, "room_found");
-            print_selected_room(map,username,which_room(map,hero.x,hero.y));
+            print_selected_room(map,username,which_room(map,hero.x,hero.y),visible);
             move_r=0;
             move_d=0;
             move_u=0;
@@ -1963,15 +2249,216 @@ int hero_movement(Map *map, char* username){
             map_check[hero.y][hero.x]='t';
             map->map[hero.y][hero.x]= 't';            
         }
-        else if(map_check[hero.y][hero.x]=='>'){
-            map_check[hero.y][hero.x]='t';
-            map->map[hero.y][hero.x]= 't';            
+        else if(map_check[hero.y][hero.x]=='<'){
+            mvprintw(0,0,"Click right key...                                              ");
+            timeout(-1);
+            int change_floor=getch();
+            switch(change_floor){
+                case KEY_RIGHT:
+                    if (current_floor < 4) { // اگر هنوز در پایین‌ترین طبقه نیستیم
+                        current_floor++;
+                        printf("Moved to floor: %d\n", current_floor);
+                    } else {
+                        printf("You are already at the lowest floor!\n");
+                    }
+                    break;
+                case KEY_LEFT:
+                    if (current_floor > 1) { // اگر هنوز در بالاترین طبقه نیستیم
+                        current_floor--;
+                        printf("Moved to floor: %d\n", current_floor);
+                    } else {
+                        printf("You are already at the top floor!\n");
+                    }
+                    break;
+                default:
+                    break;
+            }  
+            getch();
+            
+            if(current_floor==1){
+                display_visible_map(map_ptr_floor1, *visible_ptr_floor1);
+                map_ptr=map_ptr_floor1;
+                map_check_ptr=map_check_ptr_floor1;
+                visible_ptr=visible_ptr_floor1;
+            }      
+            else if(current_floor==2){                
+                display_visible_map(&map_floor_2,visible_floor_2);
+                map_ptr=&map_floor_2;
+                map_check_ptr=&map_check_floor_2;
+                visible_ptr=&visible_floor_2;
+            }
+            else if(current_floor==3){
+                display_visible_map(&map_floor_3,visible_floor_3);
+                map_ptr=&map_floor_3;
+                map_check_ptr=&map_check_floor_3;
+                visible_ptr=&visible_floor_3;
+            }
+            else if(current_floor==4){
+                display_visible_map(&map_floor_4,visible_floor_4);
+                map_ptr=&map_floor_4;
+                map_check_ptr=&map_check_floor_4;
+                visible_ptr=&visible_floor_4;
+            }
+        }
+        else if(map_check[hero.y][hero.x]=='F'&&can_grab==1){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if (hero.food_count < MAX_FOOD_INVENTORY){
+                hero.inventory[0]++;
+                hero.food_count++;
+                mvprintw(0,0,"Food grabed!                                                  ");
+                map_check[hero.y][hero.x]='.';
+                map->map[hero.y][hero.x] = '.';
+            } else {
+                mvprintw(0,0,"You can't grab more!                                                  ");
+                map_check[hero.y][hero.x]='F';
+                map->map[hero.y][hero.x] = 'F';
+            }
+            getch();
+        }
+        else if(map_check[hero.y][hero.x]=='$'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.gold+=rand()%3+5; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "You have %d gold!",hero.gold);
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='G'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.gold+=rand()%3+10; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "You have %d gold!",hero.gold);
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='M'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.weapon[0]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "Mace grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='D'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.weapon[1]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "Dagger grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='W'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.weapon[2]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "Magic Wand grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='A'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.weapon[3]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "Normal Arrow grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='S'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.weapon[4]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "Sword grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='s'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.spell[2]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "speed spell grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='d'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.spell[1]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "damage spell grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='h'){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            hero.spell[0]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "health spell grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
         }
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
         mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
         visible[hero.y][hero.x]=1; 
     }
     return ch;
+}
+void move_between_floors(int direction,char*username) {
+    if (direction == 1) { // حرکت به پایین (Right Arrow)
+        if (current_floor < 4) { // اگر هنوز در پایین‌ترین طبقه نیستیم
+            current_floor++;
+            printf("Moved to floor: %d\n", current_floor);
+        } else {
+            printf("You are already at the lowest floor!\n");
+        }
+    } else if (direction == -1) { // حرکت به بالا (Left Arrow)
+        if (current_floor > 1) { // اگر هنوز در بالاترین طبقه نیستیم
+            current_floor--;
+            printf("Moved to floor: %d\n", current_floor);
+        } else {
+            printf("You are already at the top floor!\n");
+        }
+    }
 }
 void print_colored_massage(char *message, int color_pair){
     //init_color(COLOR_ORANGE, 500, 270, 0);
@@ -2065,3 +2552,170 @@ void* check_code_timer(void* arg) {
     }
     return NULL;
 }
+void add_food_to_hero() {
+    timeout(-1);
+    if (hero.food_count < MAX_FOOD_INVENTORY){
+        hero.inventory[0]++;
+        hero.food_count++;
+        mvprintw(0,0,"Food grabed!                                                  ");
+    } else {
+        mvprintw(0,0,"You can't grab more!                                                  ");
+    }
+    getch();
+    timeout(10);
+}
+void food_menu(){
+    // Show options for new game or continue game
+    clear();
+    WINDOW *menu_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+
+    char *choices[] = {
+        "normal",
+        "special",
+        "magic",
+        "poisoned",
+        "Exit"
+    };
+    int n_choices = sizeof(choices) / sizeof(char *);
+    menu_win = newwin(10, 40, (LINES - 10) / 2, (COLS - 40) / 2);
+    keypad(menu_win, TRUE);
+    mvprintw(0, 0, "Choose witch to eat!  hungr:                 ");
+    for (int i = 0; i <= hero.hunger; i++)
+    {
+        mvprintw(0, 29+i, "#");
+    }
+    refresh();
+    print_menu(menu_win, highlight, choices, n_choices);
+
+    while (1) {
+        c = wgetch(menu_win);
+        switch (c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = n_choices;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == n_choices)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10: // Enter key
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+        print_menu(menu_win, highlight, choices, n_choices);
+        if (choice != 0)
+            break;
+    }
+    clrtoeol();
+    refresh();
+    delwin(menu_win);
+    timeout(-1);
+    // Handle the user's choice
+    switch (choice) {
+        case 1:
+            // Start a new game
+            if(hero.inventory[0]==0){
+                mvprintw(0, 0, "You don't have normal food        ");
+                getch();
+                food_menu();
+            }
+            else{
+                mvprintw(0, 0, "You eat one normal food         ");
+                hero.inventory[0]-=1;
+                hero.food_count-=1;
+                getch();
+                food_menu();
+
+            }
+            break;
+        case 2:
+            if(hero.inventory[1]==0){
+                mvprintw(0, 0, "You don't have special food         ");
+                getch();
+                food_menu();
+            }
+            else{
+                mvprintw(0, 0, "You eat one special food             ");
+                hero.inventory[1]-=1;
+                hero.food_count-=1;
+                getch();
+                food_menu();
+
+            }
+            break;
+        case 3:
+            if(hero.inventory[2]==0){
+                mvprintw(0, 0, "You don't have magic food         ");
+                getch();
+                food_menu();
+            }
+            else{
+                mvprintw(0, 0, "You eat one magic food            ");
+                hero.inventory[2]-=1;
+                hero.food_count-=1;
+                getch();
+                food_menu();
+
+            }
+            break;
+        case 4:
+            if(hero.inventory[3]==0){
+                mvprintw(0, 0, "You don't have poisoned food          ");
+                getch();
+                food_menu();
+            }
+            else{
+                mvprintw(0, 0, "You eat one poisoned food         ");
+                hero.inventory[3]-=1;
+                hero.food_count-=1;
+                getch();
+                food_menu();
+
+            }
+            break;     
+        case 5:
+            clear();
+            break;
+    }
+}
+/*void consume_food(int index) {
+    if (index >= 0 && index < hero->food_count) {
+        Food food = hero->inventory[index];
+
+        // بررسی اثرات غذا
+        hero->health += food.health_restore;
+        hero->hunger -= food.hunger_restore;
+
+        if (food.is_poisoned) {
+            hero->health -= 10;  // اثر منفی غذای فاسد
+            printf("این غذا فاسد بود! سلامت شما کاهش یافت.\n");
+        }
+        
+        // حذف غذا از موجودی
+        for (int i = index; i < hero->food_count - 1; i++) {
+            hero->inventory[i] = hero->inventory[i + 1];
+        }
+        hero->food_count--;
+
+        printf("شما %s را خوردید! سلامت: %d، گرسنگی: %d\n", food.name, hero->health, hero->hunger);
+    } else {
+        printf("غذای نامعتبر!\n");
+    }
+}
+void show_food_inventory() {
+    printf("موجودی غذاهای شما:\n");
+    for (int i = 0; i < hero->food_count; i++) {
+        printf("%d. %s (سلامتی: %d، گرسنگی: %d)\n", i + 1, hero->inventory[i].name, hero->inventory[i].health_restore, hero->inventory[i].hunger_restore);
+    }
+}
+*/
