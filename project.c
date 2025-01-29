@@ -58,6 +58,10 @@ typedef struct {
     int has_master_key;      // آیا کلید خاص در اتاق وجود دارد؟
     int master_key_used;   
     int opend;  // آیا این کلید استفاده شده است؟
+    int is_regular;
+    int is_treasure;
+    int is_enchant;
+    int is_nightmare;
 } Room;
 typedef struct {
     Room rooms[MAX_ROOMS];
@@ -129,6 +133,8 @@ void before_game_menu(char* username);
 void start_new_game(char *username);
 void continue_game(char *username);
 void view_leaderboard(char *username);
+void save_matrices(char *username, int** matrices,int i,int j);
+void load_matrices(char *username, int** matrices,int i,int j,FILE* file);
 
 void display_settings_menu(char *username);
 void change_difficulty();
@@ -136,6 +142,12 @@ void change_color();
 void select_music();
 void save_settings(const char *username);
 void load_settings(char *username);
+void save_hero(FILE *file, Hero *hero);
+void load_hero(FILE *file, Hero *hero);
+void save_room(FILE *file, Room *room);
+void save_all_rooms(FILE *file, Map *map);
+void load_room(FILE *file, Room *room);
+void load_all_rooms(FILE *file, Map *map);
 
 void secret_room(Map *map,int i);
 void password_room(Map *map,int i);
@@ -793,16 +805,7 @@ void before_game_menu(char* username){
     }
 }
 void start_new_game(char *username) {
-    // Initialize a new game and save the initial state to the user's file
-    char filename[60];
-    snprintf(filename, sizeof(filename), "%s_game.txt", username);
 
-    FILE *file = fopen(filename, "w");
-    if (file == NULL) {
-        printw("Error creating game file");
-        getch();
-        return;
-    }
     hero.food_count=0;
     hero.health=10;
     hero.inventory[0]=0;
@@ -819,8 +822,6 @@ void start_new_game(char *username) {
     hero.spell[1]=0;
     hero.spell[2]=0;
     // Save the initial game state
-    fprintf(file, "New game started\n");
-    fclose(file);
     int max_width, max_height;
     getmaxyx(stdscr, max_height, max_width);
     map.map = (int **)malloc(max_height * sizeof(int *));
@@ -905,35 +906,249 @@ void start_new_game(char *username) {
         }
         refresh();
     }
+    char filename[60];
+    snprintf(filename, sizeof(filename), "%s_game.txt", username);
+    FILE *file = fopen(filename, "w");
+    fclose(file);
+    save_matrices(username,map.map,max_height,max_width);
+    save_matrices(username,map_check,max_height,max_width);
+    save_matrices(username,visible,max_height,max_width);
+
+    save_matrices(username,map_floor_2.map,max_height,max_width);
+    save_matrices(username,map_check_floor_2,max_height,max_width);
+    save_matrices(username,visible_floor_2,max_height,max_width);
+
+    save_matrices(username,map_floor_3.map,max_height,max_width);
+    save_matrices(username,map_check_floor_3,max_height,max_width);
+    save_matrices(username,visible_floor_3,max_height,max_width);
+
+    save_matrices(username,map_floor_4.map,max_height,max_width);
+    save_matrices(username,map_check_floor_4,max_height,max_width);
+    save_matrices(username,visible_floor_4,max_height,max_width);
+    
+    char filename_h[60];
+    snprintf(filename_h, sizeof(filename_h), "%s_hero.txt", username);    
+    FILE *file_player = fopen(filename_h, "w");
+    save_hero(file_player,&hero);
+    save_all_rooms(file_player,&map);
+    save_all_rooms(file_player,&map_floor_2);
+    save_all_rooms(file_player,&map_floor_3);
+    save_all_rooms(file_player,&map_floor_4);
+    fclose(file_player);
+
     for (int i = 0; i < max_height; i++) {
         free(map.map[i]);
+        free(map_floor_2.map[i]);
+        free(map_floor_3.map[i]);
+        free(map_floor_4.map[i]);
+        free(map_check[i]);
+        free(map_check_floor_2[i]);
+        free(map_check_floor_3[i]);
+        free(map_check_floor_4[i]);
+        free(visible[i]);
+        free(visible_floor_2[i]);
+        free(visible_floor_3[i]);
+        free(visible_floor_4[i]);
     }
     free(map.map);
+    free(map_floor_2.map);
+    free(map_floor_3.map);
+    free(map_floor_4.map);
+    free(map_check);
+    free(map_check_floor_2);
+    free(map_check_floor_3);
+    free(map_check_floor_4);
+    free(visible);
+    free(visible_floor_2);
+    free(visible_floor_3);
+    free(visible_floor_4);
     before_game_menu(username);
     refresh();
 }
 void continue_game(char *username) {
     // Load the previous game state from the user's file
-    char filename[60];
-    snprintf(filename, sizeof(filename), "%s_game.txt", username);
+    int max_width, max_height;
+    getmaxyx(stdscr, max_height, max_width);
+    map.map = (int **)malloc(max_height * sizeof(int *));
+    map_check=(int **)malloc(max_height * sizeof(int *));
+    visible=(int **)malloc(max_height * sizeof(int *));
 
-    FILE *file = fopen(filename, "r");
-    if (file == NULL) {
-        printw("No previous game found. Starting a new game.");
-        start_new_game(username);
+    map_floor_2.map = (int **)malloc(max_height * sizeof(int *));
+    map_check_floor_2=(int **)malloc(max_height * sizeof(int *));
+    visible_floor_2=(int **)malloc(max_height * sizeof(int *));
+
+    map_floor_3.map = (int **)malloc(max_height * sizeof(int *));
+    map_check_floor_3=(int **)malloc(max_height * sizeof(int *));
+    visible_floor_3=(int **)malloc(max_height * sizeof(int *));
+
+    map_floor_4.map = (int **)malloc(max_height * sizeof(int *));
+    map_check_floor_4=(int **)malloc(max_height * sizeof(int *));
+    visible_floor_4=(int **)malloc(max_height * sizeof(int *));
+
+    map.floor=1;
+    map_floor_2.floor=2;
+    map_floor_3.floor=3;
+    map_floor_4.floor=4;
+    for (int i = 0; i < max_height; i++) {
+        map.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check[i] = (int *)malloc(max_width * sizeof(int));
+        visible[i] = (int *)malloc(max_width * sizeof(int));
+
+        map_floor_2.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check_floor_2[i] = (int *)malloc(max_width * sizeof(int));
+        visible_floor_2[i] = (int *)malloc(max_width * sizeof(int));
+
+        map_floor_3.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check_floor_3[i] = (int *)malloc(max_width * sizeof(int));
+        visible_floor_3[i] = (int *)malloc(max_width * sizeof(int));
+
+        map_floor_4.map[i] = (int *)malloc(max_width * sizeof(int));
+        map_check_floor_4[i] = (int *)malloc(max_width * sizeof(int));
+        visible_floor_4[i] = (int *)malloc(max_width * sizeof(int));
+    }
+    char filename_a[60];
+    snprintf(filename_a, sizeof(filename_a), "%s_game.txt", username);
+    FILE *file_a = fopen(filename_a, "r");
+
+    if (!file_a) {
+        perror("EROR...");
         return;
     }
+    load_matrices(username,map.map,max_height,max_width,file_a);
+    load_matrices(username,map_check,max_height,max_width,file_a);
+    load_matrices(username,visible,max_height,max_width,file_a);
 
-    // Read and print the previous game state
-    char line[100];
-    while (fgets(line, sizeof(line), file)) {
-        printw("%s", line);
+    load_matrices(username,map_floor_2.map,max_height,max_width,file_a);
+    load_matrices(username,map_check_floor_2,max_height,max_width,file_a);
+    load_matrices(username,visible_floor_2,max_height,max_width,file_a);
+
+    load_matrices(username,map_floor_3.map,max_height,max_width,file_a);
+    load_matrices(username,map_check_floor_3,max_height,max_width,file_a);
+    load_matrices(username,visible_floor_3,max_height,max_width,file_a);
+
+    load_matrices(username,map_floor_4.map,max_height,max_width,file_a);
+    load_matrices(username,map_check_floor_4,max_height,max_width,file_a);
+    load_matrices(username,visible_floor_4,max_height,max_width,file_a);
+    fclose(file_a);
+
+    char filename_h[60];
+    snprintf(filename_h, sizeof(filename_h), "%s_hero.txt", username);    
+    FILE *file_player = fopen(filename_h, "r");
+    load_hero(file_player,&hero);
+    load_all_rooms(file_player,&map);
+    load_all_rooms(file_player,&map_floor_2);
+    load_all_rooms(file_player,&map_floor_3);
+    load_all_rooms(file_player,&map_floor_4);
+    fclose(file_player);
+
+    srand(time(NULL));
+    switch (current_floor){
+        case 1:
+            display_visible_map(&map,visible);
+            visible_ptr=&visible;
+            map_check_ptr=&map_check;
+            map_ptr=&map;
+            break;
+        case 2:
+            display_visible_map(&map_floor_2,visible_floor_2);
+            visible_ptr=&visible_floor_2;
+            map_check_ptr=&map_check_floor_2;
+            map_ptr=&map_floor_2;
+            break;
+        case 3:
+            display_visible_map(&map_floor_3,visible_floor_3);
+            visible_ptr=&visible_floor_3;
+            map_check_ptr=&map_check_floor_3;
+            map_ptr=&map_floor_3;
+            break;
+        case 4:
+            display_visible_map(&map_floor_4,visible_floor_4);
+            visible_ptr=&visible_floor_4;
+            map_check_ptr=&map_check_floor_4;
+            map_ptr=&map_floor_4;
+            break;
+        default:
+            break;
     }
+    play_music();
+    load_settings(username);
+    char quit;
+    timeout(10);
+
+    map_ptr_floor1=&map;
+    map_check_ptr_floor1=&map_check;
+    visible_ptr_floor1=&visible;
+    while (1) {
+        //clear();
+        if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
+                mvprintw(0,COLS-10, "              "); // پاک کردن پیام
+                code_shown = false; // غیرفعال کردن نمایش رمز
+        }
+        if((quit=hero_movement(map_ptr,map_check_ptr,visible_ptr,username))=='q'){
+            break;
+        }
+        refresh();
+    }
+    clear();
+    refresh();
+    char filename[60];
+    snprintf(filename, sizeof(filename), "%s_game.txt", username);
+    FILE *file = fopen(filename, "w");
     fclose(file);
 
+    save_matrices(username,map.map,max_height,max_width);
+    save_matrices(username,map_check,max_height,max_width);
+    save_matrices(username,visible,max_height,max_width);
+
+    save_matrices(username,map_floor_2.map,max_height,max_width);
+    save_matrices(username,map_check_floor_2,max_height,max_width);
+    save_matrices(username,visible_floor_2,max_height,max_width);
+
+    save_matrices(username,map_floor_3.map,max_height,max_width);
+    save_matrices(username,map_check_floor_3,max_height,max_width);
+    save_matrices(username,visible_floor_3,max_height,max_width);
+
+    save_matrices(username,map_floor_4.map,max_height,max_width);
+    save_matrices(username,map_check_floor_4,max_height,max_width);
+    save_matrices(username,visible_floor_4,max_height,max_width);
+      
+    file_player = fopen(filename_h, "w");
+    save_hero(file_player,&hero);
+    save_all_rooms(file_player,&map);
+    save_all_rooms(file_player,&map_floor_2);
+    save_all_rooms(file_player,&map_floor_3);
+    save_all_rooms(file_player,&map_floor_4);
+    fclose(file_player);
+    for (int i = 0; i < max_height; i++) {
+        free(map.map[i]);
+        free(map_floor_2.map[i]);
+        free(map_floor_3.map[i]);
+        free(map_floor_4.map[i]);
+        free(map_check[i]);
+        free(map_check_floor_2[i]);
+        free(map_check_floor_3[i]);
+        free(map_check_floor_4[i]);
+        free(visible[i]);
+        free(visible_floor_2[i]);
+        free(visible_floor_3[i]);
+        free(visible_floor_4[i]);
+    }
+    free(map.map);
+    free(map_floor_2.map);
+    free(map_floor_3.map);
+    free(map_floor_4.map);
+    free(map_check);
+    free(map_check_floor_2);
+    free(map_check_floor_3);
+    free(map_check_floor_4);
+    free(visible);
+    free(visible_floor_2);
+    free(visible_floor_3);
+    free(visible_floor_4);
+    before_game_menu(username);
     refresh();
-    getch();
 }
+
 void view_leaderboard(char *username) {
     FILE *file;
     char line[256];
@@ -2017,9 +2232,9 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             const char* damge_spell="☠️";
             mvprintw(7, 3, "%s",damge_spell); 
 
-            mvprintw(5,5, "(Mace):%d",hero.spell[0]);
-            mvprintw(6,5, "(Dagger):%d",hero.spell[1]);
-            mvprintw(7,5, "(Magic Wand):%d",hero.spell[2]);
+            mvprintw(5,5, "(healt_spell):%d",hero.spell[0]);
+            mvprintw(6,5, "(speed_spell):%d",hero.spell[1]);
+            mvprintw(7,5, "(damge_spell):%d",hero.spell[2]);
 
             getch();
             display_visible_map(map,visible);
@@ -2688,34 +2903,106 @@ void food_menu(){
             break;
     }
 }
-/*void consume_food(int index) {
-    if (index >= 0 && index < hero->food_count) {
-        Food food = hero->inventory[index];
 
-        // بررسی اثرات غذا
-        hero->health += food.health_restore;
-        hero->hunger -= food.hunger_restore;
-
-        if (food.is_poisoned) {
-            hero->health -= 10;  // اثر منفی غذای فاسد
-            printf("این غذا فاسد بود! سلامت شما کاهش یافت.\n");
+void save_matrices(char *username, int** matrices,int i,int j) {
+    char filename[60];
+    snprintf(filename, sizeof(filename), "%s_game.txt", username);
+    FILE *file = fopen(filename, "a");
+    if (!file) {
+        perror("Eror...");
+        return;
+    }
+    for (int r = 0; r < LINES; r++) {
+        for (int c = 0; c < COLS; c++) {
+            fprintf(file, "%d ", matrices[r][c]);
         }
-        
-        // حذف غذا از موجودی
-        for (int i = index; i < hero->food_count - 1; i++) {
-            hero->inventory[i] = hero->inventory[i + 1];
-        }
-        hero->food_count--;
+        fprintf(file, "\n");  // رفتن به خط بعدی برای سطر بعدی
+    }
+    fprintf(file, "===\n");  // جداکننده بین ماتریس‌ها
 
-        printf("شما %s را خوردید! سلامت: %d، گرسنگی: %d\n", food.name, hero->health, hero->hunger);
-    } else {
-        printf("غذای نامعتبر!\n");
+    fclose(file);
+}
+
+// تابع خواندن ماتریس‌ها از فایل
+void load_matrices(char *username, int** matrices,int i,int j,FILE *file) {
+    for (int r = 0; r < LINES; r++) {
+        for (int c = 0; c < COLS; c++) {
+            if (fscanf(file, "%d ",&matrices[r][c]) != 1) {
+                break;  // در صورت خطا، از حلقه خارج شو
+            }
+        }
+    }
+    char separator[10];  // خواندن جداکننده "==="
+    fscanf(file, "%s", separator);
+}
+void save_hero(FILE *file, Hero *hero) {
+    fprintf(file, "Hero:\n");
+    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+            hero->x, hero->y,
+            hero->health, hero->hunger, hero->gold,
+            hero->inventory[0], hero->inventory[1],
+            hero->inventory[2], hero->inventory[3],
+            hero->weapon[0], hero->weapon[1],
+            hero->weapon[2], hero->weapon[3],
+            hero->weapon[4]);
+    fprintf(file, "current floor:%d\n",current_floor);
+}
+void load_hero(FILE *file, Hero *hero) {
+    fscanf(file, "Hero:\n");
+    fscanf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+           &hero->x, &hero->y,
+           &hero->health, &hero->hunger, &hero->gold,
+           &hero->inventory[0], &hero->inventory[1],
+           &hero->inventory[2], &hero->inventory[3],
+           &hero->weapon[0], &hero->weapon[1],
+           &hero->weapon[2], &hero->weapon[3],
+           &hero->weapon[4]);
+    fscanf(file, "current floor:%d\n",&current_floor);
+}
+void save_room(FILE *file, Room *room) {
+    fprintf(file, "Room:\n");
+    fprintf(file, "%d %d %d %d ", room->x, room->y, room->width, room->height);
+    fprintf(file, "%d %d %s %d %d %d %d %d %d %d\n",
+            room->has_secret_door,
+            room->has_password_door,
+            room->password,
+            room->has_master_key,
+            room->master_key_used,
+            room->opend,
+            room->is_regular,
+            room->is_treasure,
+            room->is_enchant,
+            room->is_nightmare
+    );
+}
+void save_all_rooms(FILE *file, Map *map) {
+    fprintf(file, "Total Rooms: %d\n", map->room_count); // ذخیره تعداد اتاق‌ها
+    for (int i = 0; i < map->room_count; i++) {
+        save_room(file, &map->rooms[i]);
     }
 }
-void show_food_inventory() {
-    printf("موجودی غذاهای شما:\n");
-    for (int i = 0; i < hero->food_count; i++) {
-        printf("%d. %s (سلامتی: %d، گرسنگی: %d)\n", i + 1, hero->inventory[i].name, hero->inventory[i].health_restore, hero->inventory[i].hunger_restore);
+void load_room(FILE *file, Room *room) {
+    fscanf(file, "Room:\n");
+    fscanf(file, "%d %d %d %d ", &room->x, &room->y, &room->width, &room->height);
+    fscanf(file, "%d %d %6s %d %d %d %d %d %d %d\n",
+           &room->has_secret_door,
+           &room->has_password_door,
+           room->password,
+           &room->has_master_key,
+           &room->master_key_used,
+           &room->opend,
+           &room->is_regular,
+           &room->is_treasure,
+           &room->is_enchant,
+           &room->is_nightmare
+    );
+}
+void load_all_rooms(FILE *file, Map *map) {
+    int total_rooms;
+    fscanf(file, "Total Rooms: %d\n", &total_rooms);
+    map->room_count = total_rooms;
+
+    for (int i = 0; i < total_rooms; i++) {
+        load_room(file, &map->rooms[i]);
     }
 }
-*/
