@@ -18,11 +18,33 @@
 #define COLOR_yellow 15
 #define MAX_FOOD_INVENTORY 5  // حداکثر تعداد غذاهایی که بازیکن می‌تواند حمل کند
 #define MAX_GOLD 5
+#define MAX_ENEMIES 1
 //------------
 int move_u=0;
 int move_d=0;
 int move_r=0;
 int move_l=0;
+
+typedef enum {
+    DEAMON,
+    FIRE_BREATHING_MONSTER,
+    GIANT,
+    SNAKE,
+    UNDEAD
+} EnemyType;
+typedef struct {
+    EnemyType type;       // نوع دشمن
+    char symbol;          // نماد نمایشی (D, F, G, S, U)
+    int min_damage;       // حداقل آسیب برای نابودی
+    int health;           // سلامت (فقط برای SNAKE)
+    int chase_steps;      // مراحل باقیمانده برای تعقیب (برای GIANT و UNDEAD)
+    bool is_chasing;      // وضعیت تعقیب
+    int x, y;             // مختصات فعلی دشمن
+} Enemy;
+typedef struct {
+    Enemy *enemies; // آرایه پویا
+    int count;      // تعداد دشمنان فعلی
+} EnemyList;
 typedef struct {
     int x, y;
     int value;
@@ -84,6 +106,11 @@ typedef struct {
     int spell[3];
 } Hero;
 
+int chase_steps_deamon;
+int chase_steps_giant;
+int chase_steps_fire;
+int chase_steps_undeed;
+
 int **map_check;
 int** visible;
 int **map_check_floor_2;
@@ -98,6 +125,7 @@ int ***map_check_ptr;
 int ***map_check_ptr_floor1;
 int ***visible_ptr_floor1;
 
+EnemyList enemies;
 GoldBag gold[10];
 Settings settings;
 Hero hero;
@@ -109,9 +137,12 @@ Map *map_ptr;
 Map *map_ptr_floor1;
 bool code_shown = false; // نشان می‌دهد که رمز فعلی نمایش داده شده یا نه
 time_t code_start_time = 0;
+time_t code_start_time_heal = 0;
 bool show_full_map = false;
 pthread_t timer_thread;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_t timer_thread_heal;
+pthread_mutex_t mutex_heal = PTHREAD_MUTEX_INITIALIZER;
 //------------// Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
@@ -154,6 +185,7 @@ void password_room(Map *map,int i);
 void special_key(Map *map);
 void show_code_temporarily(WINDOW *win, int x, int y, char *code);
 void* check_code_timer(void* arg);
+void* check_code_timer_heal(void* arg);
 
 /*void load_music(settings);*/
 void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
@@ -169,6 +201,10 @@ void print_colored_massage(char *message, int color_pair);
 
 void add_food_to_hero();
 void food_menu();
+
+void enemis_move(Map *map,int***map_check_ptr,int***visible_ptr,char* username,char enemy,int room_num,int i, int j);
+void spawn_enemies(EnemyList *list, int map_width, int map_height);
+Enemy create_random_enemy(int map_width, int map_height);
 /*void consume_food(int index);
 void show_food_inventory(hero);*/
 //------------
@@ -185,7 +221,17 @@ int main() {
     strcpy(settings.main_color,"Red");
     //strcpy (settings.music,"Track1");
     settings.selected_music=1;
+    enemies.enemies = (Enemy*)malloc(MAX_ENEMIES * sizeof(Enemy));
+    enemies.count = 0;
+    int chase_steps_deamon=5;
+    int chase_steps_giant=5;
+    int chase_steps_fire=5;
+    int chase_steps_undeed=5;
     if (pthread_create(&timer_thread, NULL, check_code_timer, NULL) != 0) {
+        perror("Failed to create timer thread");
+        return 1;
+    }
+    if (pthread_create(&timer_thread_heal, NULL, check_code_timer_heal, NULL) != 0) {
         perror("Failed to create timer thread");
         return 1;
     }
@@ -807,7 +853,7 @@ void before_game_menu(char* username){
 void start_new_game(char *username) {
 
     hero.food_count=0;
-    hero.health=10;
+    hero.health=5;
     hero.inventory[0]=0;
     hero.inventory[1]=0;
     hero.inventory[2]=0;
@@ -900,6 +946,15 @@ void start_new_game(char *username) {
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(0,COLS-10, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
+        }
+        if (difftime(time(NULL), code_start_time_heal) >= 10) {
+            if(hero.health<10){
+                hero.health++;
+            } // غیرفعال کردن نمایش رمز
+            mvprintw(1, 0, "Your health: %d              ",hero.health);// غیرفعال کردن نمایش رمز
+            pthread_mutex_lock(&mutex_heal);
+            code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
+            pthread_mutex_unlock(&mutex_heal);
         }
         if((quit=hero_movement(map_ptr,map_check_ptr,visible_ptr,username))=='q'){
             break;
@@ -1083,6 +1138,15 @@ void continue_game(char *username) {
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(0,COLS-10, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
+        }
+        if (difftime(time(NULL), code_start_time_heal) >= 10) {
+            if(hero.health<10){
+                hero.health++;
+            } // غیرفعال کردن نمایش رمز
+            mvprintw(1, 0, "Your health: %d              ",hero.health);
+            code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
+            pthread_mutex_lock(&mutex_heal);
+            pthread_mutex_unlock(&mutex_heal);// غیرفعال کردن نمایش رمز
         }
         if((quit=hero_movement(map_ptr,map_check_ptr,visible_ptr,username))=='q'){
             break;
@@ -1725,6 +1789,7 @@ void add_pillars_stair_traps(Map *map) {
         Room *room = &map->rooms[i];
         int pillars = (room->width - 2) * (room->height - 2) / 16; // تعداد ستون‌ها
         int traps= rand()%2;
+        int place_enemy=0;
         for (int j = 0; j < pillars; j++) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
@@ -1739,7 +1804,7 @@ void add_pillars_stair_traps(Map *map) {
                 map->map[py][px] = '8'; // trap
             }
         }
-        for (int j = 0; j < 3; j++) {
+        for (int j = 0; j < rand()%2; j++) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
@@ -1757,28 +1822,28 @@ void add_pillars_stair_traps(Map *map) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = 'G'; // GOLD
+                map->map[py][px] = 'g'; // GOLD
             }
         }
         for (int j = 0; j <rand()%2; j++) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = 'M'; // (Mace)
+                map->map[py][px] = 'C'; // (Mace)
             }
         } 
         for (int j = 0; j <rand()%2; j++) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = 'D'; // (Dagger):
+                map->map[py][px] = 'e'; // (Dagger):
             }
         }     
         for (int j = 0; j <rand()%2; j++) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = 'W'; // (Magic Wand)
+                map->map[py][px] = 'N'; // (Magic Wand)
             }
         }    
         for (int j = 0; j <rand()%2; j++) {
@@ -1792,7 +1857,7 @@ void add_pillars_stair_traps(Map *map) {
             int px = room->x + 2 + rand() % (room->width - 4);
             int py = room->y + 2 + rand() % (room->height - 4);
             if (map->map[py][px] == '.') {
-                map->map[py][px] = 'S'; // :(Sword)
+                map->map[py][px] = 'W'; // :(Sword)
             }
         }  
         for (int j = 0; j <rand()%2; j++) {
@@ -1816,6 +1881,58 @@ void add_pillars_stair_traps(Map *map) {
                 map->map[py][px] = 'd'; // :(damage spell)
             }
         } 
+        if(i!=0){
+            if(place_enemy==0){
+                for (int j = 0; j <rand()%2; j++) {
+                    int px = room->x + 2 + rand() % (room->width - 4);
+                    int py = room->y + 2 + rand() % (room->height - 4);
+                    if (map->map[py][px] == '.') {
+                        map->map[py][px] = 'D'; // (deamon)
+                        place_enemy=1;
+                    }
+                } 
+            }
+            if(place_enemy==0){
+                for (int j = 0; j <rand()%2; j++) {
+                    int px = room->x + 2 + rand() % (room->width - 4);
+                    int py = room->y + 2 + rand() % (room->height - 4);
+                    if (map->map[py][px] == '.') {
+                        map->map[py][px] = 'F'; // (Monster)
+                        place_enemy=1;
+                    }
+                } 
+            }
+            if(place_enemy==0){
+                for (int j = 0; j <rand()%2; j++) {
+                    int px = room->x + 2 + rand() % (room->width - 4);
+                    int py = room->y + 2 + rand() % (room->height - 4);
+                    if (map->map[py][px] == '.') {
+                        map->map[py][px] = 'g'; // (Giant)
+                        place_enemy=1;
+                    }
+                } 
+            }
+            if(place_enemy==0){
+                for (int j = 0; j <rand()%2; j++) {
+                    int px = room->x + 2 + rand() % (room->width - 4);
+                    int py = room->y + 2 + rand() % (room->height - 4);
+                    if (map->map[py][px] == '.') {
+                        map->map[py][px] = 'S'; // (Snake)
+                        place_enemy=1;
+                    }
+                } 
+            }
+            if(place_enemy==0){
+                for (int j = 0; j <rand()%2; j++) {
+                    int px = room->x + 2 + rand() % (room->width - 4);
+                    int py = room->y + 2 + rand() % (room->height - 4);
+                    if (map->map[py][px] == '.') {
+                        map->map[py][px] = 'U'; // (Undeed)
+                        place_enemy=1;
+                    }
+                } 
+            }
+        }
     }
     Room *room = &map->rooms[0];
     map->map[3][3] = '<'; // stair
@@ -1925,10 +2042,24 @@ void print_full_map(Map *map, int max_width, int max_height,char* username) {
             }else if(map->map[y][x]=='1'){
                 const char* key="@";
                 mvprintw(y + 1, x, "%s",key); 
-            }else if(map->map[y][x]=='G'){
+            }else if(map->map[y][x]=='g'){
                 const char* black_gold="€";
                 mvprintw(y + 1, x, "%s",black_gold); 
-                visible[y][x]=1; 
+            }else if(map->map[y][x]=='C'){
+                const char* Mace="⍑";
+                mvprintw(y + 1, x, "%s",Mace); 
+            }else if(map->map[y][x]=='e'){
+                const char* Dagger="ⴕ";
+                mvprintw(y + 1, x, "%s",Dagger); 
+            }else if(map->map[y][x]=='N'){
+                const char* Magic="⧙";
+                mvprintw(y + 1, x, "%s",Magic); 
+            }else if(map->map[y][x]=='A'){
+                const char* Arrow="➤";
+                mvprintw(y + 1, x, "%s",Arrow); 
+            }else if(map->map[y][x]=='W'){
+                const char* Sword="⟆";
+                mvprintw(y + 1, x, "%s",Sword); 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
 
@@ -1979,10 +2110,30 @@ void print_selected_room(Map *map, char* username,int room_num,int**visible){
                 const char* food="F";
                 mvprintw(y + 1, x, "%s",food); 
                 visible[y][x]=1; 
-            }else if(map->map[y][x]=='G'){
+            }else if(map->map[y][x]=='g'){
                 const char* black_gold="€";
                 mvprintw(y + 1, x, "%s",black_gold); 
                 visible[y][x]=1; 
+            }else if(map->map[y][x]=='C'){
+                const char* Mace="⍑";
+                mvprintw(y + 1, x, "%s",Mace); 
+                visible[y][x]=1; 
+            }else if(map->map[y][x]=='e'){
+                const char* Dagger="ⴕ";
+                mvprintw(y + 1, x, "%s",Dagger); 
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='N'){
+                const char* Magic="⧙";
+                mvprintw(y + 1, x, "%s",Magic); 
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='A'){
+                const char* Arrow="➤";
+                mvprintw(y + 1, x, "%s",Arrow); 
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='W'){
+                const char* Sword="⟆";
+                mvprintw(y + 1, x, "%s",Sword); 
+                visible[y][x]=1;
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
                 visible[y][x]=1; 
@@ -2248,13 +2399,539 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         hero.y = new_y;
         if(map->map[hero.y][hero.x]=='.'){
             mvprintw(0,0, "room_found");
-            print_selected_room(map,username,which_room(map,hero.x,hero.y),visible);
+            int room_num=which_room(map,hero.x,hero.y);
+            int close_turn=5;
+            print_selected_room(map,username,room_num,visible);
             move_r=0;
             move_d=0;
             move_u=0;
             move_l=0;
+            if(ch=='1'||ch=='2'||ch=='3'||ch=='4'||ch=='5'||ch=='6'||ch=='7'||ch=='8'||ch=='9'){
+                for (int i = map->rooms[room_num].y; i < map->rooms[room_num].y+map->rooms[room_num].height; i++)
+                {
+                    for (int j = map->rooms[room_num].x; j < map->rooms[room_num].x+map->rooms[room_num].width; j++)
+                    {
+                        if(map->map[i][j]=='D'&&chase_steps_deamon>1){
+                            mvprintw(0,0, "                       enemy found %d",chase_steps_deamon);
+                            int dx = hero.x - j;
+                            int dy = hero.y - i;
+                            if (dx > 1) {
+                                if(map->map[i][j+1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j+1]='D';
+                                    map_check[i][j]='.';
+                                    map_check[i][j+1]='D';
+                                    chase_steps_deamon--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='D';
+                                        chase_steps_deamon--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='D';
+                                        chase_steps_deamon--;
+                                    }
+                                }
+                            }else if (dx < -1){
+                                if(map->map[i][j-1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j-1]='D';
+                                    map_check[i][j]='.';
+                                    map_check[i][j-1]='D';
+                                    chase_steps_deamon--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='D';
+                                        chase_steps_deamon--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='D';
+                                        chase_steps_deamon--;
+                                    }  
+                                }
+                            }
+                            else if (dy > 1){
+                                if(map->map[i+1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i+1][j]='D';
+                                    map_check[i][j]='.';
+                                    map_check[i+1][j]='D';
+                                    chase_steps_deamon--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='D';
+                                        chase_steps_deamon--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='D';
+                                        chase_steps_deamon--;
+                                    }  
+                                }
+                            }else if (dy < -1){
+                                if(map->map[i-1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i-1][j]='D';
+                                    map_check[i][j]='.';
+                                    map_check[i-1][j]='D';
+                                    chase_steps_deamon--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='D';
+                                        chase_steps_deamon--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='D';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='D';
+                                        chase_steps_deamon--;
+                                    }  
+                                }
+                            } 
+                        }
+                        if(map->map[i][j]=='E'&&chase_steps_deamon>1){
+                            int dx = hero.x - j;
+                            int dy = hero.y - i;
+                            if (dx > 1) {
+                                if(map->map[i][j+1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j+1]='E';
+                                    map_check[i][j]='.';
+                                    map_check[i][j+1]='E';
+                                    chase_steps_fire--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='E';
+                                        chase_steps_fire--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='E';
+                                        chase_steps_fire--;
+                                    }
+                                }
+                            }else if (dx < -1){
+                                if(map->map[i][j-1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j-1]='E';
+                                    map_check[i][j]='.';
+                                    map_check[i][j-1]='E';
+                                    chase_steps_fire--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='E';
+                                        chase_steps_fire--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='E';
+                                        chase_steps_fire--;
+                                    }  
+                                }
+                            }
+                            else if (dy > 1){
+                                if(map->map[i+1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i+1][j]='E';
+                                    map_check[i][j]='.';
+                                    map_check[i+1][j]='E';
+                                    chase_steps_fire--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='E';
+                                        chase_steps_fire--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='E';
+                                        chase_steps_fire--;
+                                    }  
+                                }
+                            }else if (dy < -1){
+                                if(map->map[i-1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i-1][j]='E';
+                                    map_check[i][j]='.';
+                                    map_check[i-1][j]='E';
+                                    chase_steps_fire--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='E';
+                                        chase_steps_fire--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='E';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='E';
+                                        chase_steps_fire--;
+                                    }  
+                                }
+                            } 
+                        }
+                        if(map->map[i][j]=='G'&&chase_steps_giant>1){
+                            int dx = hero.x - j;
+                            int dy = hero.y - i;
+                            if (dx > 1) {
+                                if(map->map[i][j+1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j+1]='G';
+                                    map_check[i][j]='.';
+                                    map_check[i][j+1]='G';
+                                    chase_steps_giant--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='G';
+                                        chase_steps_giant--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='G';
+                                        chase_steps_giant--;
+                                    }
+                                }
+                            }else if (dx < -1){
+                                if(map->map[i][j-1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j-1]='G';
+                                    map_check[i][j]='.';
+                                    map_check[i][j-1]='G';
+                                    chase_steps_giant--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='G';
+                                        chase_steps_giant--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='G';
+                                        chase_steps_giant--;
+                                    }  
+                                }
+                            }
+                            else if (dy > 1){
+                                if(map->map[i+1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i+1][j]='G';
+                                    map_check[i][j]='.';
+                                    map_check[i+1][j]='G';
+                                    chase_steps_giant--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='G';
+                                        chase_steps_giant--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='G';
+                                        chase_steps_giant--;
+                                    }  
+                                }
+                            }else if (dy < -1){
+                                if(map->map[i-1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i-1][j]='G';
+                                    map_check[i][j]='.';
+                                    map_check[i-1][j]='G';
+                                    chase_steps_giant--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='G';
+                                        chase_steps_giant--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='G';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='G';
+                                        chase_steps_giant--;
+                                    }  
+                                }
+                            } 
+                        }
+                        if(map->map[i][j]=='S'){
+                            int dx = hero.x - j;
+                            int dy = hero.y - i;
+                            if (dx > 1) {
+                                if(map->map[i][j+1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j+1]='S';
+                                    map_check[i][j]='.';
+                                    map_check[i][j+1]='S';
+                                    
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='S';
+                                        
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='S';
+                                        
+                                    }
+                                }
+                            }else if (dx < -1){
+                                if(map->map[i][j-1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j-1]='S';
+                                    map_check[i][j]='.';
+                                    map_check[i][j-1]='S';
+                                    
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='S';
+                                        
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='S';
+                                        
+                                    }  
+                                }
+                            }
+                            else if (dy > 1){
+                                if(map->map[i+1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i+1][j]='S';
+                                    map_check[i][j]='.';
+                                    map_check[i+1][j]='S';
+                                    
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='S';
+                                        
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='S';
+                                        
+                                    }  
+                                }
+                            }else if (dy < -1){
+                                if(map->map[i-1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i-1][j]='S';
+                                    map_check[i][j]='.';
+                                    map_check[i-1][j]='S';
+                                    
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='S';
+                                        
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='S';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='S';
+                                        
+                                    }  
+                                }
+                            } 
+                        } 
+                        if(map->map[i][j]=='U'&&chase_steps_undeed>1){
+                            int dx = hero.x - j;
+                            int dy = hero.y - i;
+                            if (dx > 1) {
+                                if(map->map[i][j+1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j+1]='U';
+                                    map_check[i][j]='.';
+                                    map_check[i][j+1]='U';
+                                    chase_steps_undeed--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='U';
+                                        chase_steps_undeed--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='U';
+                                        chase_steps_undeed--;
+                                    }
+                                }
+                            }else if (dx < -1){
+                                if(map->map[i][j-1]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i][j-1]='U';
+                                    map_check[i][j]='.';
+                                    map_check[i][j-1]='U';
+                                    chase_steps_undeed--;
+                                }else if(dy >= 1){
+                                    if(map->map[i+1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i+1][j]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i+1][j]='U';
+                                        chase_steps_undeed--;
+                                    }
+                                }else if(dy <= -1){
+                                    if(map->map[i-1][j]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i-1][j]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i-1][j]='U';
+                                        chase_steps_undeed--;
+                                    }  
+                                }
+                            }
+                            else if (dy > 1){
+                                if(map->map[i+1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i+1][j]='U';
+                                    map_check[i][j]='.';
+                                    map_check[i+1][j]='U';
+                                    chase_steps_undeed--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='U';
+                                        chase_steps_undeed--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='U';
+                                        chase_steps_undeed--;
+                                    }  
+                                }
+                            }else if (dy <= -1){
+                                if(map->map[i-1][j]=='.'){
+                                    map->map[i][j]='.';
+                                    map->map[i-1][j]='U';
+                                    map_check[i][j]='.';
+                                    map_check[i-1][j]='U';
+                                    chase_steps_undeed--;
+                                }else if(dx >= 1){
+                                    if(map->map[i][j+1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j+1]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i][j+1]='U';
+                                        chase_steps_undeed--;
+                                    }
+                                }else if(dx <= -1){
+                                    if(map->map[i][j-1]=='.'){
+                                        map->map[i][j]='.';
+                                        map->map[i][j-1]='U';
+                                        map_check[i][j]='.';
+                                        map_check[i][j-1]='U';
+                                        chase_steps_undeed--;
+                                    }  
+                                }
+                            } 
+                        }
+                        //print_selected_room(map,username,room_num,visible);
+                    }                
+                }
+            }
         }
         else if(map_check[hero.y][hero.x]=='#'){
+            chase_steps_deamon=5;
+            chase_steps_giant=5;
+            chase_steps_fire=5; 
+            chase_steps_undeed=5;
             int x =hero.x;
             int y=hero.y;
             int i=0;
@@ -2544,7 +3221,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='G'){
+        else if(map_check[hero.y][hero.x]=='g'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -2556,7 +3233,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='M'){
+        else if(map_check[hero.y][hero.x]=='C'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -2568,7 +3245,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='D'){
+        else if(map_check[hero.y][hero.x]=='e'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -2580,7 +3257,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='W'){
+        else if(map_check[hero.y][hero.x]=='N'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -2604,7 +3281,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='S'){
+        else if(map_check[hero.y][hero.x]=='W'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
@@ -2763,6 +3440,20 @@ void* check_code_timer(void* arg) {
             code_shown = false; // غیرفعال کردن نمایش رمز
         }
         pthread_mutex_unlock(&mutex); // آزاد کردن قفل
+        usleep(100000); // خواب 100 میلی‌ثانیه برای کاهش مصرف پردازنده
+    }
+    return NULL;
+}
+void* check_code_timer_heal(void* arg) {
+    while (1) {
+        pthread_mutex_lock(&mutex_heal); // قفل کردن برای دسترسی امن به متغیرها
+        if (difftime(time(NULL), code_start_time_heal) >= 10) {
+            if(hero.health<10){
+                hero.health++;
+            } // غیرفعال کردن نمایش رمز
+            mvprintw(1, 0, "Your health: %d              ",hero.health); // پاک کردن پیام
+        }
+        pthread_mutex_unlock(&mutex_heal); // آزاد کردن قفل
         usleep(100000); // خواب 100 میلی‌ثانیه برای کاهش مصرف پردازنده
     }
     return NULL;
@@ -3006,3 +3697,154 @@ void load_all_rooms(FILE *file, Map *map) {
         load_room(file, &map->rooms[i]);
     }
 }
+void enemis_move(Map *map,int***map_check_ptr,int***visible_ptr,char* username,char enemy,int room_num,int i, int j){
+    int dx = hero.x - j;
+    int dy = hero.y - i;
+    if (dx > 1) {
+        if(map_check[i][j+1]=='.'){
+            map->map[i][j]='.';
+            map->map[i][j+1]=enemy;
+            map_check[i][j]='.';
+            map_check[i][j+1]=enemy;
+            chase_steps_deamon--;
+        }else if(dy > 1){
+            if(map_check[i+1][j]=='.'){
+                map->map[i][j]='.';
+                map->map[i+1][j]=enemy;
+                map_check[i][j]='.';
+                map_check[i+1][j]=enemy;
+                chase_steps_deamon--;
+            }
+        }else if(dy < -1){
+            if(map_check[i-1][j]=='.'){
+                map->map[i][j]='.';
+                map->map[i-1][j]=enemy;
+                map_check[i][j]='.';
+                map_check[i-1][j]=enemy;
+                chase_steps_deamon--;
+            }
+        }
+    }else if (dx < -1){
+        if(map_check[i][j-1]=='.'){
+            map->map[i][j]='.';
+            map->map[i][j-1]=enemy;
+            map_check[i][j]='.';
+            map_check[i][j-1]=enemy;
+            chase_steps_deamon--;
+        }else if(dy > 1){
+            if(map_check[i+1][j]=='.'){
+                map->map[i][j]='.';
+                map->map[i+1][j]=enemy;
+                map_check[i][j]='.';
+                map_check[i+1][j]=enemy;
+                chase_steps_deamon--;
+            }
+        }else if(dy < -1){
+            if(map_check[i-1][j]=='.'){
+                map->map[i][j]='.';
+                map->map[i-1][j]=enemy;
+                map_check[i][j]='.';
+                map_check[i-1][j]=enemy;
+                chase_steps_deamon--;
+            }  
+        }
+    }
+    else if (dy > 1){
+        if(map_check[i+1][j]=='.'){
+            map->map[i][j]='.';
+            map->map[i+1][j]=enemy;
+            map_check[i][j]='.';
+            map_check[i+1][j]=enemy;
+            chase_steps_deamon--;
+        }else if(dx > 1){
+            if(map_check[i][j+1]=='.'){
+                map->map[i][j]='.';
+                map->map[i][j+1]=enemy;
+                map_check[i][j]='.';
+                map_check[i][j+1]=enemy;
+                chase_steps_deamon--;
+            }
+        }else if(dx < -1){
+            if(map_check[i][j-1]=='.'){
+                map->map[i][j]='.';
+                map->map[i][j-1]=enemy;
+                map_check[i][j]='.';
+                map_check[i][j-1]=enemy;
+                chase_steps_deamon--;
+            }  
+        }
+    }else if (dy < -1){
+        if(map_check[i-1][j]=='.'){
+            map->map[i][j]='.';
+            map->map[i-1][j]=enemy;
+            map_check[i][j]='.';
+            map_check[i-1][j]=enemy;
+            chase_steps_deamon--;
+        }else if(dx > 1){
+            if(map_check[i][j+1]=='.'){
+                map->map[i][j]='.';
+                map->map[i][j+1]=enemy;
+                map_check[i][j]='.';
+                map_check[i][j+1]=enemy;
+                chase_steps_deamon--;
+            }
+        }else if(dx < -1){
+            if(map_check[i][j-1]=='.'){
+                map->map[i][j]='.';
+                map->map[i][j-1]=enemy;
+                map_check[i][j]='.';
+                map_check[i][j-1]=enemy;
+                chase_steps_deamon--;
+            }  
+        }
+    } 
+}
+/*
+void spawn_enemies(EnemyList *list, int map_width, int map_height) {
+    if (list->count >= MAX_ENEMIES) return; // اگر به حداکثر رسیده
+    
+    // احتمال 30% برای ایجاد دشمن جدید
+    if ((rand() % 100) < SPAWN_RATE) {
+        Enemy new_enemy = create_random_enemy(map_width, map_height);
+        list->enemies[list->count] = new_enemy;
+        list->count++;
+    }
+}
+Enemy create_random_enemy(int map_width, int map_height) {
+    Enemy enemy;
+    
+    // انتخاب تصادفی نوع دشمن
+    enemy.type = rand() % 5; // 0 تا 4
+    
+    // تعیین نماد و ویژگی‌ها بر اساس نوع
+    switch (enemy.type) {
+        case DEAMON:
+            enemy.symbol = 'D';
+            enemy.health = 8;
+            break;
+        case FIRE_BREATHING_MONSTER:
+            enemy.symbol = 'F';
+            enemy.health = 10;
+            break;
+        case GIANT:
+            enemy.symbol = 'G';
+            enemy.health = 15;
+            break;
+        case SNAKE:
+            enemy.symbol = 'S';
+            enemy.health = 20;
+            break;
+        case UNDEAD:
+            enemy.symbol = 'U';
+            enemy.health = 30;
+            break;
+    }
+    
+    // موقعیت تصادفی در محدوده نقشه
+    enemy.x = rand() % map_width;
+    enemy.y = rand() % map_height;
+    enemy.is_chasing = false;
+    enemy.chase_steps = 0;
+    
+    return enemy;
+}*/
