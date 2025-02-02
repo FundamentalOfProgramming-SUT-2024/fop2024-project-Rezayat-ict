@@ -84,6 +84,8 @@ typedef struct {
     int is_treasure;
     int is_enchant;
     int is_nightmare;
+    int enemies[5];
+    int enemies_move[5];
 } Room;
 typedef struct {
     Room rooms[MAX_ROOMS];
@@ -104,12 +106,23 @@ typedef struct {
     int weapon[5];
     int using_weapon;
     int spell[3];
+    double play_timer;
+    int num_game;
 } Hero;
+struct timespec start_time, end_time;
 
 int chase_steps_deamon;
 int chase_steps_giant;
 int chase_steps_fire;
 int chase_steps_undeed;
+int diraction;
+int health_spel=0;
+int speed_spel=0;
+int damage_spel=0;
+int damage_increase=1;
+int in_enchant_room;
+int win;
+int lose;
 
 int **map_check;
 int** visible;
@@ -138,11 +151,14 @@ Map *map_ptr_floor1;
 bool code_shown = false; // نشان می‌دهد که رمز فعلی نمایش داده شده یا نه
 time_t code_start_time = 0;
 time_t code_start_time_heal = 0;
+time_t code_start_time_hunger = 0;
 bool show_full_map = false;
 pthread_t timer_thread;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_t timer_thread_heal;
 pthread_mutex_t mutex_heal = PTHREAD_MUTEX_INITIALIZER;
+pthread_t timer_thread_hunger;
+pthread_mutex_t mutex_hunger = PTHREAD_MUTEX_INITIALIZER;
 //------------// Function declarations
 void create_room(Room *room, int max_width, int max_height);
 void place_rooms(Map *map, int max_width, int max_height);
@@ -163,10 +179,10 @@ void reset_password_help();
 void before_game_menu(char* username);
 void start_new_game(char *username);
 void continue_game(char *username);
-void view_leaderboard(char *username);
+void view_leaderboard(char *username,int j);
 void save_matrices(char *username, int** matrices,int i,int j);
 void load_matrices(char *username, int** matrices,int i,int j,FILE* file);
-
+double get_elapsed_time(struct timespec start, struct timespec end);
 void display_settings_menu(char *username);
 void change_difficulty();
 void change_color();
@@ -179,6 +195,7 @@ void save_room(FILE *file, Room *room);
 void save_all_rooms(FILE *file, Map *map);
 void load_room(FILE *file, Room *room);
 void load_all_rooms(FILE *file, Map *map);
+void update_player_score( char *filename,  char *target_username, int score_change, int gold_change);
 
 void secret_room(Map *map,int i);
 void password_room(Map *map,int i);
@@ -186,6 +203,7 @@ void special_key(Map *map);
 void show_code_temporarily(WINDOW *win, int x, int y, char *code);
 void* check_code_timer(void* arg);
 void* check_code_timer_heal(void* arg);
+void* check_code_timer_hunger(void* arg);
 
 /*void load_music(settings);*/
 void print_settings_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices);
@@ -227,11 +245,19 @@ int main() {
     int chase_steps_giant=5;
     int chase_steps_fire=5;
     int chase_steps_undeed=5;
+    in_enchant_room=0;
+    diraction=0;
+    win=0;
+    lose=0;
     if (pthread_create(&timer_thread, NULL, check_code_timer, NULL) != 0) {
         perror("Failed to create timer thread");
         return 1;
     }
     if (pthread_create(&timer_thread_heal, NULL, check_code_timer_heal, NULL) != 0) {
+        perror("Failed to create timer thread");
+        return 1;
+    }
+    if (pthread_create(&timer_thread_hunger, NULL, check_code_timer_hunger, NULL) != 0) {
         perror("Failed to create timer thread");
         return 1;
     }
@@ -362,6 +388,7 @@ void print_menu(WINDOW *menu_win, int highlight, char **choices, int n_choices) 
 }
 
 void create_user() {
+    timeout(-1);
     char username[50];
     char password[50];
     char email[50];
@@ -437,8 +464,21 @@ void create_user() {
         getch();
         return;
     }
-
-    if (strstr(email, "@") == NULL || strstr(email, ".") == NULL) {
+    int validate_email=0;
+    for(int i=0;i<strlen(email);i++){
+        if(email[i]=='@'){
+            for(int j=i;j<strlen(email);j++){
+                if(email[j]=='.'){
+                    validate_email=1;
+                    break;
+                }
+            }
+        }
+        if(validate_email==1){
+            break;
+        }
+    }
+    if (validate_email==0) {
         mvwprintw(input_win, 8, 1, "Invalid email format");
         mvwprintw(input_win, 9, 1, "Press enter to refill...");
         wrefresh(input_win);
@@ -451,8 +491,14 @@ void create_user() {
     fprintf(file_user, "Username: %s\nPassword: %s\nEmail: %s\n\nDifficulty: %d\nMain Color: %s\nSelected Music: %d", username, password, email,1,"Red",1);
     fclose(file_user);
     file=fopen("leaderboard.txt","a");
-    fprintf(file, "%s,%d,%d,%d,%d\n", username,0,0,0,0);
+    time_t current_time = time(NULL);
+    struct tm *time_info = localtime(&current_time);
+
+    // ذخیره‌سازی زمان در فایل
+    time_t now = time(NULL);
+    fprintf(file, "%s,%d,%d,%d,%ld\n", username,0,0,0,now);
     fclose(file);
+    
     mvwprintw(input_win, 8, 1, "User created successfully!");
     wrefresh(input_win);
     getch();
@@ -479,6 +525,7 @@ int is_username_taken(const char *username) {
     return 0;
 }
 void user_entrance_menu(){
+    timeout(-1);
     char username[50];
     char password[50];
     char filename[60];
@@ -700,6 +747,7 @@ void reset_password_help() {
     delwin(input_win);
 }
 void guest_entrance(){
+    timeout(-1);
     WINDOW *menu_win;
     int highlight = 1;
     int choice = 0;
@@ -768,6 +816,7 @@ void before_game_menu(char* username){
     delwin(input_win);
 */
     // Show options for new game or continue game
+    timeout(-1);
     WINDOW *menu_win;
     int highlight = 1;
     int choice = 0;
@@ -832,7 +881,7 @@ void before_game_menu(char* username){
             break;
         case 3:
             //clear();
-            view_leaderboard(username);
+            view_leaderboard(username,0);
             clear();
             before_game_menu(username);
             break;
@@ -851,14 +900,14 @@ void before_game_menu(char* username){
     }
 }
 void start_new_game(char *username) {
-
     hero.food_count=0;
-    hero.health=5;
+    hero.health=10;
+    hero.hunger=0;
     hero.inventory[0]=0;
     hero.inventory[1]=0;
     hero.inventory[2]=0;
     hero.inventory[3]=0;
-    hero.weapon[0]=1;
+    hero.weapon[0]=0;
     hero.weapon[1]=0;
     hero.weapon[2]=0;
     hero.weapon[3]=0;
@@ -931,7 +980,6 @@ void start_new_game(char *username) {
     play_music();
     load_settings(username);
     char quit;
-    timeout(10);
 
     map_ptr=&map;
     map_ptr_floor1=&map;
@@ -941,8 +989,20 @@ void start_new_game(char *username) {
 
     visible_ptr=&visible;
     visible_ptr_floor1=&visible;
+    double elapsed_time; // متغیر برای ذخیره زمان بازی
+    
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    timeout(10);
     while (1) {
-        //clear();
+        if(hero.health==0){
+            lose=1;
+            break;
+        }
+        mvprintw(0, 39, "                         ");
+        mvprintw(0, 40, "Your health:");
+        for(int i=0 ;i< hero.health;i++){
+            mvprintw(0, 54+i, "#");
+        }
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(0,COLS-10, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
@@ -950,17 +1010,46 @@ void start_new_game(char *username) {
         if (difftime(time(NULL), code_start_time_heal) >= 10) {
             if(hero.health<10){
                 hero.health++;
+                if(health_spel>0){
+                    hero.health++;
+                }
             } // غیرفعال کردن نمایش رمز
-            mvprintw(1, 0, "Your health: %d              ",hero.health);// غیرفعال کردن نمایش رمز
+            //mvprintw(1, 0, "Your health: %d              ",hero.health);// غیرفعال کردن نمایش رمز
             pthread_mutex_lock(&mutex_heal);
             code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
             pthread_mutex_unlock(&mutex_heal);
+        }
+        if (difftime(time(NULL), code_start_time_hunger) >= 5) {
+            if(hero.hunger<10){
+                hero.hunger++;
+            } 
+            else{
+                hero.health--;
+            } 
+            pthread_mutex_lock(&mutex_heal);
+            code_start_time_hunger = time(NULL); // زمان شروع نمایش رمز
+            pthread_mutex_unlock(&mutex_heal);
+        }
+        if(damage_spel>0 && (quit=='1'||quit=='2'||quit=='3'||quit=='4'||quit=='5'||quit=='6'||quit=='7'||quit=='8')){
+            damage_spel-=1;
+        }
+        if(health_spel>0 && (quit=='1'||quit=='2'||quit=='3'||quit=='4'||quit=='5'||quit=='6'||quit=='7'||quit=='8')){
+            health_spel-=1;
+        }
+        if(speed_spel>0 && (quit=='1'||quit=='2'||quit=='3'||quit=='4'||quit=='5'||quit=='6'||quit=='7'||quit=='8')){
+            speed_spel-=1;
         }
         if((quit=hero_movement(map_ptr,map_check_ptr,visible_ptr,username))=='q'){
             break;
         }
         refresh();
     }
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+    elapsed_time = get_elapsed_time(start_time, end_time);
+    hero.play_timer=elapsed_time;
+    printf("elapsed time : %.2f sec\n", elapsed_time);
+
     char filename[60];
     snprintf(filename, sizeof(filename), "%s_game.txt", username);
     FILE *file = fopen(filename, "w");
@@ -980,7 +1069,7 @@ void start_new_game(char *username) {
     save_matrices(username,map_floor_4.map,max_height,max_width);
     save_matrices(username,map_check_floor_4,max_height,max_width);
     save_matrices(username,visible_floor_4,max_height,max_width);
-    
+    update_player_score("leaderboard.txt",username,hero.gold,hero.gold);
     char filename_h[60];
     snprintf(filename_h, sizeof(filename_h), "%s_hero.txt", username);    
     FILE *file_player = fopen(filename_h, "w");
@@ -1134,6 +1223,7 @@ void continue_game(char *username) {
     map_check_ptr_floor1=&map_check;
     visible_ptr_floor1=&visible;
     while (1) {
+        mvprintw(2,0,"%s",settings.main_color);
         //clear();
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(0,COLS-10, "              "); // پاک کردن پیام
@@ -1142,11 +1232,38 @@ void continue_game(char *username) {
         if (difftime(time(NULL), code_start_time_heal) >= 10) {
             if(hero.health<10){
                 hero.health++;
+                if(health_spel>0){
+                    hero.health++;
+                }
             } // غیرفعال کردن نمایش رمز
-            mvprintw(1, 0, "Your health: %d              ",hero.health);
-            code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
+            //mvprintw(1, 0, "Your health: %d              ",hero.health);
             pthread_mutex_lock(&mutex_heal);
-            pthread_mutex_unlock(&mutex_heal);// غیرفعال کردن نمایش رمز
+            code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
+            pthread_mutex_unlock(&mutex_heal);
+        }
+        if (difftime(time(NULL), code_start_time_hunger) >= 5) {
+            if(hero.hunger<5){
+                hero.hunger++;
+            } 
+            else{
+                hero.health--;
+            } // غیرفعال کردن نمایش رمز
+            if(in_enchant_room==1){
+                hero.health--;
+            }
+            pthread_mutex_lock(&mutex_heal);
+            code_start_time_hunger = time(NULL); // زمان شروع نمایش رمز
+          
+            pthread_mutex_unlock(&mutex_heal);
+        }
+        if(damage_spel>0){
+            damage_spel-=1;
+        }
+        if(health_spel>0){
+            health_spel-=1;
+        }
+        if(speed_spel>0){
+            speed_spel-=1;
         }
         if((quit=hero_movement(map_ptr,map_check_ptr,visible_ptr,username))=='q'){
             break;
@@ -1175,7 +1292,7 @@ void continue_game(char *username) {
     save_matrices(username,map_floor_4.map,max_height,max_width);
     save_matrices(username,map_check_floor_4,max_height,max_width);
     save_matrices(username,visible_floor_4,max_height,max_width);
-      
+    update_player_score("leaderboard.txt",username,hero.gold,hero.gold);
     file_player = fopen(filename_h, "w");
     save_hero(file_player,&hero);
     save_all_rooms(file_player,&map);
@@ -1213,7 +1330,7 @@ void continue_game(char *username) {
     refresh();
 }
 
-void view_leaderboard(char *username) {
+void view_leaderboard(char *username, int j) {
     FILE *file;
     char line[256];
     Player players[100];  // فرض می‌کنیم حداکثر ۱۰۰ کاربر داریم
@@ -1239,44 +1356,95 @@ void view_leaderboard(char *username) {
 
     // مرتب‌سازی کاربران بر اساس امتیاز کل
     for (int i = 0; i < player_count - 1; i++) {
-        for (int j = i + 1; j < player_count; j++) {
-            if (players[i].total_score < players[j].total_score) {
+        for (int k = i + 1; k < player_count; k++) {
+            if (players[i].total_score < players[k].total_score) {
                 Player temp = players[i];
-                players[i] = players[j];
-                players[j] = temp;
+                players[i] = players[k];
+                players[k] = temp;
             }
         }
     }
 
-    // نمایش ۵ نفر اول در جدول امتیازات
-    WINDOW *leaderboard_win = newwin(20, 80, (LINES - 20) / 2, (COLS - 80) / 2);
+    // ایجاد پنجره جدول امتیازات
+    WINDOW *leaderboard_win = newwin(10, 82, (LINES - 10) / 2, (COLS - 82) / 2);
     box(leaderboard_win, 0, 0);
-    mvwprintw(leaderboard_win, 1, 2, "Rank   Username   Total Score   Total Gold   Games Played   Time Elapsed");
-    mvwprintw(leaderboard_win, 2, 1, "-----------------------------------------------------------------------");
 
-    for (int i = 0; i < player_count && i < 5; i++) {
-        // محاسبه زمان سپری شده از اولین بازی
-        time_t current_time = time(NULL);
-        double time_elapsed = difftime(current_time, players[i].first_game_time) / (60 * 60 * 24); // تبدیل به روز
+    int quit = 0;
+    while (!quit) {
+        werase(leaderboard_win); // پاک کردن محتوای قبلی
+        box(leaderboard_win, 0, 0);
+        mvwprintw(leaderboard_win, 1, 2, " Rank   Username   Total Score   Total Gold   Games Played   Time Elapsed");
+        mvwprintw(leaderboard_win, 2, 1, " ------------------------------------------------------------------------");
 
-        if (strcmp(username, players[i].username) == 0) {
-            wattron(leaderboard_win, A_BOLD);
+        int show_num = 0;
+        for (int i = j; i < player_count && show_num < 5; i++) {
+            show_num++;
+            time_t current_time = time(NULL);
+            double time_elapsed = difftime(current_time, players[i].first_game_time) / (60*60);
+            init_pair(3, COLOR_BLUE, COLOR_BLACK);
+            init_pair(2, COLOR_BLUE, COLOR_BLACK);
+            if (strcmp(username, players[i].username) == 0) {
+                wattron(leaderboard_win, A_BOLD);
+                wattron(leaderboard_win, COLOR_PAIR(3));
+            }
+            else if (i>=0&&i<=2) {
+                wattron(leaderboard_win, A_ITALIC);
+                wattron(leaderboard_win, COLOR_PAIR(2));
+            }
+            const char* medal = "";
+            if (i == 0) medal = "🥇";
+            else if (i == 1) medal = "🥈";
+            else if (i == 2) medal = "🥉";
+            if (i>=0&&i<=2) {
+                char user[100];
+                snprintf(user, sizeof(user), "%s (LEGEND)",players[i].username);
+                mvwprintw(leaderboard_win, i - j + 3, 2, "%-5d  %-10s  %-12d  %-10d  %-13d  %.1f hours %s", 
+                            i + 1, user , players[i].total_score, 
+                            players[i].total_gold, players[i].games_played, time_elapsed, medal);
+            }
+            else{
+                mvwprintw(leaderboard_win, i - j + 3, 2, "%-5d  %-10s  %-12d  %-10d  %-13d  %.1f hours %s", 
+                            i + 1, players[i].username, players[i].total_score, 
+                            players[i].total_gold, players[i].games_played, time_elapsed, medal);
+            }
+            if (strcmp(username, players[i].username) == 0) {
+                wattroff(leaderboard_win, A_BOLD);
+                wattroff(leaderboard_win, COLOR_PAIR(3));
+            }
+            else if (i>=0&&i<=2) {
+                wattroff(leaderboard_win, A_ITALIC);
+                wattroff(leaderboard_win, COLOR_PAIR(2));
+            }
         }
 
-        mvwprintw(leaderboard_win, i + 3, 2, "%-5d  %-10s  %-12d  %-10d  %-13d  %.1f days", 
-                  i + 1, players[i].username, players[i].total_score, 
-                  players[i].total_gold, players[i].games_played, time_elapsed);
+        wrefresh(leaderboard_win);
+        timeout(-1);
 
-        if (strcmp(username, players[i].username) == 0) {
-            wattroff(leaderboard_win, A_BOLD);
+        // کنترل حرکت در جدول
+        int scroll = getch();
+        switch (scroll) {
+            case 'u':
+                if (j > 0) {
+                    j--;  // مقدار را کاهش بده
+                }
+                break;
+            case 'd':
+                if (j < player_count - 5) {
+                    mvprintw(1,0,"%d",player_count);
+                    j++;  // مقدار را افزایش بده
+                }
+                break;
+            case 'q':  // خروج با زدن کلید q
+                quit = 1;
+                break;
         }
     }
 
-    wrefresh(leaderboard_win);
-    getch();
+    clrtoeol();
+    refresh();
     delwin(leaderboard_win);
-    clear();
 }
+
 void display_settings_menu(char *username) {
     WINDOW *settings_win;
     int highlight = 1;
@@ -1560,7 +1728,9 @@ void save_settings(const char *username) {
 }
 
 void load_settings(char *username) {
-    FILE *file = fopen(username, "r");
+    char filename[60];
+    snprintf(filename, sizeof(filename), "%s.txt", username);
+    FILE *file = fopen(filename, "r");
     if (file == NULL) {
         // Default settings
         settings.difficulty = 1;
@@ -1569,6 +1739,15 @@ void load_settings(char *username) {
         //load_music(settings);
         return;
     }
+    long pos = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        if (strstr(line, "Difficulty") != NULL) {
+            pos = ftell(file) - strlen(line);
+            break;
+        }
+    }
+    fseek(file, pos, SEEK_SET);
     fscanf(file, "Difficulty: %d\n", &settings.difficulty);
     fscanf(file, "Main Color: %s\n", settings.main_color);
     fscanf(file, "Selected Music: %s\n", settings.music[settings.selected_music]);
@@ -1614,6 +1793,8 @@ void place_rooms(Map *map, int max_width, int max_height) {
     map->room_count = 0;
     while (map->room_count < MAX_ROOMS) {
         Room new_room;
+        new_room.has_password_door=0;
+        new_room.has_secret_door=0;
         if(map->room_count==0){
             new_room.width = 6; // حداقل عرض 4، حداکثر 6
             new_room.height = 6; // حداقل ارتفاع 4، حداکثر 6
@@ -1646,13 +1827,10 @@ void place_rooms(Map *map, int max_width, int max_height) {
                     map->map[y][x] = '.';
                 }
             }
-            // اضافه کردن ورودی اتاق در وسط هر دیوار (بدون گوشه‌ها)
-            /*map->map[new_room.y + new_room.height / 2][new_room.x] = '+'; // ورودی در دیوار چپ
-            map->map[new_room.y][new_room.x + new_room.width / 2] = '+'; // ورودی در دیوار بالا
-            map->map[new_room.y + new_room.height / 2][new_room.x + new_room.width - 1] = '+'; // ورودی در دیوار راست
-            map->map[new_room.y + new_room.height - 1][new_room.x + new_room.width / 2] = '+'; // ورودی در دیوار پایین
-        */
-       }
+        }
+    }
+    if(map->floor==4){
+        map->rooms[MAX_ROOMS-1].is_treasure=1;
     }
     if(map->floor==1){
         map->rooms[2].has_password_door=1;
@@ -1727,42 +1905,29 @@ void secret_room(Map *map,int i){
     for (int x = room->x; x < room->x + room->width; x++) {
         if(map->map[room->y][x] == '+'){
             map->map[room->y][x] = '?';
-            return;
         }
         if( map->map[room->y + room->height - 1][x] == '+'){
             map->map[room->y + room->height - 1][x] = '?';
-            return;
         }
     }
     for (int y = room->y; y < room->y + room->height; y++) {
         if(map->map[y][room->x] == '+'){
             map->map[y][room->x] = '!';
-            return;
         }
         if(map->map[y][room->x + room->width - 1] == '+'){
             map->map[y][room->x + room->width - 1] = '!';
-            return;
         }
     }
 }
 void password_room(Map *map,int i){
     Room *room = &map->rooms[i];
-    int px = room->x+2 + rand() % (room->width-4);
-    int py = room->y+2 + rand() % (room->height-4);
-    map->map[py][px] = '&'; // دکمه تولید رمز
-    /*if (player_x == password_door_x && player_y == password_door_y) {
-        char input_password[5];
-        mvprintw(0, 0, "Enter the password: ");
-        echo();
-        getstr(input_password);
-        noecho();
-        if (strcmp(input_password, current_room->password) == 0) {
-            mvprintw(0, 0, "Door unlocked!");
-            map->map[password_door_y][password_door_x] = '+'; // باز کردن در
-        } else {
-            mvprintw(0, 0, "Wrong password!");
-        }
-    }*/
+    int px = room->x+1 + rand() % (room->width-3);
+    int py = room->y+1 + rand() % (room->height-3);
+    if(px==3&&py==3){
+        px=2;
+        py=2;
+    }
+    map->map[py][px] = '&'; 
     for (int x = room->x; x < room->x + room->width; x++) {
         if(map->map[room->y][x] == '+'){
             map->map[room->y][x] = '1';
@@ -1804,133 +1969,272 @@ void add_pillars_stair_traps(Map *map) {
                 map->map[py][px] = '8'; // trap
             }
         }
-        for (int j = 0; j < rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'F'; // FOOD
-            }
+        if(map->rooms[i].is_enchant==1){
+            for (int j = 0; j <1+rand()%3; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'h'; // :(health spell)
+                }
+            } 
+            for (int j = 0; j < traps; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = '8'; // trap
+                }
+            }   
+            for (int j = 0; j <1+rand()%3; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 's'; // :(speed spell)
+                }
+            } 
+            for (int j = 0; j <1+rand()%3; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'd'; // :(damage spell)
+                }
+            }    
         }
-        for (int j = 0; j <rand()%3; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = '$'; // GOLD
-            }
-        }
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'g'; // GOLD
-            }
-        }
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'C'; // (Mace)
-            }
-        } 
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'e'; // (Dagger):
-            }
-        }     
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'N'; // (Magic Wand)
-            }
-        }    
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'A'; // (Normal Arrow)
-            }
-        }  
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'W'; // :(Sword)
-            }
-        }  
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'h'; // :(health spell)
-            }
-        } 
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 's'; // :(speed spell)
-            }
-        } 
-        for (int j = 0; j <rand()%2; j++) {
-            int px = room->x + 2 + rand() % (room->width - 4);
-            int py = room->y + 2 + rand() % (room->height - 4);
-            if (map->map[py][px] == '.') {
-                map->map[py][px] = 'd'; // :(damage spell)
-            }
-        } 
-        if(i!=0){
-            if(place_enemy==0){
+        if(map->rooms[i].is_treasure==1){
+            int which_enemy=rand()%5;
+            if(which_enemy==0){
                 for (int j = 0; j <rand()%2; j++) {
                     int px = room->x + 2 + rand() % (room->width - 4);
                     int py = room->y + 2 + rand() % (room->height - 4);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'D'; // (deamon)
-                        place_enemy=1;
+                        map->rooms[i].enemies[0]=5;
                     }
                 } 
             }
-            if(place_enemy==0){
+            if(which_enemy==1){
                 for (int j = 0; j <rand()%2; j++) {
                     int px = room->x + 2 + rand() % (room->width - 4);
                     int py = room->y + 2 + rand() % (room->height - 4);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'F'; // (Monster)
-                        place_enemy=1;
+                        map->rooms[i].enemies[1]=10;
                     }
                 } 
             }
-            if(place_enemy==0){
+            if(which_enemy==2){
                 for (int j = 0; j <rand()%2; j++) {
                     int px = room->x + 2 + rand() % (room->width - 4);
                     int py = room->y + 2 + rand() % (room->height - 4);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'g'; // (Giant)
-                        place_enemy=1;
+                        map->rooms[i].enemies[2]=15;
                     }
                 } 
             }
-            if(place_enemy==0){
+            if(which_enemy==3){
                 for (int j = 0; j <rand()%2; j++) {
                     int px = room->x + 2 + rand() % (room->width - 4);
                     int py = room->y + 2 + rand() % (room->height - 4);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'S'; // (Snake)
-                        place_enemy=1;
+                        map->rooms[i].enemies[3]=20;
                     }
                 } 
             }
-            if(place_enemy==0){
+            if(which_enemy==4){
                 for (int j = 0; j <rand()%2; j++) {
                     int px = room->x + 2 + rand() % (room->width - 4);
                     int py = room->y + 2 + rand() % (room->height - 4);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'U'; // (Undeed)
-                        place_enemy=1;
+                        map->rooms[i].enemies[4]=30;
+
                     }
                 } 
+            }
+            
+            int px = room->x + 2 + rand() % (room->width - 4);
+            int py = room->y + 2 + rand() % (room->height - 4);
+            map->map[py][px] = 'T'; 
+        }
+        else{
+            for (int j = 0; j < rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'F'; // FOOD
+                }
+            }
+            for (int j = 0; j <rand()%3; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = '$'; // GOLD
+                }
+            }
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'g'; // GOLD
+                }
+            } 
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'e'; // (Dagger):
+                }
+            }     
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'N'; // (Magic Wand)
+                }
+            }    
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'A'; // (Normal Arrow)
+                }
+            }  
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'W'; // :(Sword)
+                }
+            }  
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'h'; // :(health spell)
+                }
+            } 
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 's'; // :(speed spell)
+                }
+            } 
+            for (int j = 0; j <rand()%2; j++) {
+                int px = room->x + 2 + rand() % (room->width - 4);
+                int py = room->y + 2 + rand() % (room->height - 4);
+                if (map->map[py][px] == '.') {
+                    map->map[py][px] = 'd'; // :(damage spell)
+                }
+            } 
+            if(i!=0&&map->floor>1){
+                int which_enemy=rand()%5;
+                if(which_enemy==0){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'D'; // (deamon)
+                            map->rooms[i].enemies[0]=5;
+                        }
+                    } 
+                }
+                if(which_enemy==1){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'F'; // (Monster)
+                            map->rooms[i].enemies[1]=10;
+                        }
+                    } 
+                }
+                if(which_enemy==2){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'g'; // (Giant)
+                            map->rooms[i].enemies[2]=15;
+                        }
+                    } 
+                }
+                if(which_enemy==3){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'S'; // (Snake)
+                            map->rooms[i].enemies[3]=20;
+                        }
+                    } 
+                }
+                if(which_enemy==4){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'U'; // (Undeed)
+                            map->rooms[i].enemies[4]=30;
+
+                        }
+                    } 
+                }
+            }
+            if(i!=2&&map->floor==1){
+                int which_enemy=rand()%5;
+                if(which_enemy==0){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'D'; // (deamon)
+                            map->rooms[i].enemies[0]=5;
+                        }
+                    } 
+                }
+                if(which_enemy==1){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'F'; // (Monster)
+                            map->rooms[i].enemies[1]=10;
+                        }
+                    } 
+                }
+                if(which_enemy==2){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'g'; // (Giant)
+                            map->rooms[i].enemies[2]=15;
+                        }
+                    } 
+                }
+                if(which_enemy==3){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'S'; // (Snake)
+                            map->rooms[i].enemies[3]=20;
+                        }
+                    } 
+                }
+                if(which_enemy==4){
+                    for (int j = 0; j <rand()%2; j++) {
+                        int px = room->x + 2 + rand() % (room->width - 4);
+                        int py = room->y + 2 + rand() % (room->height - 4);
+                        if (map->map[py][px] == '.') {
+                            map->map[py][px] = 'U'; // (Undeed)
+                            map->rooms[i].enemies[4]=30;
+
+                        }
+                    } 
+                }
             }
         }
     }
@@ -1947,6 +2251,52 @@ void generate_map(Map *map, int max_width, int max_height) {
     }
     place_rooms(map, max_width, max_height);
     connect_rooms(map);
+    int place_enchant=0;
+    if(place_enchant==0 && map->floor==1){
+        if(rand()%4<2){
+            map->rooms[1].is_enchant=1;
+            map->rooms[1].is_nightmare=0;
+            map->rooms[1].is_regular=0;
+            map->rooms[1].is_treasure=0;
+            map->rooms[5].is_enchant=1;
+            map->rooms[5].is_nightmare=0;
+            map->rooms[5].is_regular=0;
+            map->rooms[5].is_treasure=0;
+        }
+        else{
+            map->rooms[1].is_enchant=1;
+            map->rooms[1].is_nightmare=0;
+            map->rooms[1].is_regular=0;
+            map->rooms[1].is_treasure=0;
+            map->rooms[4].is_enchant=1;
+            map->rooms[4].is_nightmare=0;
+            map->rooms[4].is_regular=0;
+            map->rooms[4].is_treasure=0;
+        }
+        place_enchant=1;
+    }else if(place_enchant==0 && map->floor!=1){
+        if(rand()%4<2){
+            map->rooms[2].is_enchant=1;
+            map->rooms[2].is_nightmare=0;
+            map->rooms[2].is_regular=0;
+            map->rooms[2].is_treasure=0;
+            map->rooms[4].is_enchant=1;
+            map->rooms[4].is_nightmare=0;
+            map->rooms[4].is_regular=0;
+            map->rooms[4].is_treasure=0;
+        }
+        else{
+            map->rooms[1].is_enchant=1;
+            map->rooms[1].is_nightmare=0;
+            map->rooms[1].is_regular=0;
+            map->rooms[1].is_treasure=0;
+            map->rooms[3].is_enchant=1;
+            map->rooms[3].is_nightmare=0;
+            map->rooms[3].is_regular=0;
+            map->rooms[3].is_treasure=0;
+        }
+        place_enchant=1;
+    }
     add_pillars_stair_traps(map);
     int have_secrest ,have_password =0;
     for (int i = 0; i < map->room_count; i++) {
@@ -1956,9 +2306,9 @@ void generate_map(Map *map, int max_width, int max_height) {
                 map->map[y][room->x] = '+';
             if(map->map[y][room->x + room->width - 1] == '#')
                 map->map[y][room->x + room->width - 1] = '+';            
-            if(map->map[y][room->x] != '+')
+            if(map->map[y][room->x] =='.')
                 map->map[y][room->x] = '|';
-            if(map->map[y][room->x + room->width - 1] != '+')
+            if(map->map[y][room->x + room->width - 1] =='.')
                 map->map[y][room->x + room->width - 1] = '|';
         }
         for (int x = room->x; x < room->x + room->width; x++) {
@@ -1966,18 +2316,25 @@ void generate_map(Map *map, int max_width, int max_height) {
                 map->map[room->y][x] = '+';
             if( map->map[room->y + room->height - 1][x] == '#')
                 map->map[room->y + room->height - 1][x] = '+';
-            if(map->map[room->y][x] != '+')
+            if(map->map[room->y][x] == '.')
                 map->map[room->y][x] = '-';
-            if( map->map[room->y + room->height - 1][x] != '+')
+            if( map->map[room->y + room->height - 1][x] =='.')
                 map->map[room->y + room->height - 1][x] = '-';
         }
-        if(room->has_secret_door&&have_secrest==0){
+        if(room->is_enchant==1 ){
             secret_room(map,i);
             have_secrest=1;
         }
-        else if(room->has_password_door&&have_password==0){
-            password_room(map,i);
-            have_password=1;
+        else if(room->has_password_door==1 &&have_password==0){
+            if(map->floor==1&& i==2){
+                password_room(map,i);
+                have_password=1;
+            }
+            if(map->floor>1&& i==0){
+                password_room(map,i);
+                have_password=1;
+            }
+            
         }
     }
     special_key(map);
@@ -1993,7 +2350,31 @@ void print_map(Map *map, int max_width, int max_height,char* username) {
             for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
                 if(map->map[y][x]=='.'){
                     map->map[y][x]='H';
+                    if(strcmp(settings.main_color,"Red")==0){
+                        attron(COLOR_PAIR(1));
+                    }
+                    if(strcmp(settings.main_color,"Green")==0){
+                        attron(COLOR_PAIR(2));
+                    }
+                    if(strcmp(settings.main_color,"Blue")==0){
+                        attron(COLOR_PAIR(3));
+                    }
+                    if(strcmp(settings.main_color,"Yellow")==0){
+                        attron(COLOR_PAIR(4));
+                    }
                     mvprintw(y + 1, x, "%c",map->map[y][x]);
+                    if(strcmp(settings.main_color,"Red")==0){
+                        attroff(COLOR_PAIR(1));
+                    }
+                    if(strcmp(settings.main_color,"Green")==0){
+                        attroff(COLOR_PAIR(2));
+                    }
+                    if(strcmp(settings.main_color,"Blue")==0){
+                        attroff(COLOR_PAIR(3));
+                    }
+                    if(strcmp(settings.main_color,"Yellow")==0){
+                        attroff(COLOR_PAIR(4));
+                    } 
                     place_hero=1;
                     hero.x=x;
                     hero.y=y;
@@ -2014,7 +2395,31 @@ void print_map(Map *map, int max_width, int max_height,char* username) {
             for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
                 if(map->map[y][x]=='<'){
                     map->map[y][x]='H';
+                    if(strcmp(settings.main_color,"Red")==0){
+                        attron(COLOR_PAIR(1));
+                    }
+                    if(strcmp(settings.main_color,"Green")==0){
+                        attron(COLOR_PAIR(2));
+                    }
+                    if(strcmp(settings.main_color,"Blue")==0){
+                        attron(COLOR_PAIR(3));
+                    }
+                    if(strcmp(settings.main_color,"Yellow")==0){
+                        attron(COLOR_PAIR(4));
+                    }
                     mvprintw(y + 1, x, "%c",map->map[y][x]);
+                    if(strcmp(settings.main_color,"Red")==0){
+                        attroff(COLOR_PAIR(1));
+                    }
+                    if(strcmp(settings.main_color,"Green")==0){
+                        attroff(COLOR_PAIR(2));
+                    }
+                    if(strcmp(settings.main_color,"Blue")==0){
+                        attroff(COLOR_PAIR(3));
+                    }
+                    if(strcmp(settings.main_color,"Yellow")==0){
+                        attroff(COLOR_PAIR(4));
+                    } 
                     place_hero=1;
                     hero.x=x;
                     hero.y=y;
@@ -2031,17 +2436,27 @@ void print_map(Map *map, int max_width, int max_height,char* username) {
 }
 void print_full_map(Map *map, int max_width, int max_height,char* username) {
     clear();
+    init_pair(1,COLOR_RED,COLOR_BLACK);
+    init_pair(2,COLOR_GREEN,COLOR_BLACK);
+    init_pair(3,COLOR_BLUE,COLOR_BLACK);
+    init_pair(4,COLOR_YELLOW,COLOR_BLACK);
     for (int y = 0; y < max_height; y++) {
         for (int x = 0; x < max_width; x++) {
             if(map->map[y][x]=='9'){
                 const char* key="△";
+                attron(COLOR_PAIR(4));
                 mvprintw(y + 1, x, "%s",key);                
+                attroff(COLOR_PAIR(4));
             }else if(map->map[y][x]=='8'){
                 const char* key="∧";
+                attron(COLOR_PAIR(1));
                 mvprintw(y + 1, x, "%s",key); 
+                attroff(COLOR_PAIR(1));
             }else if(map->map[y][x]=='1'){
                 const char* key="@";
-                mvprintw(y + 1, x, "%s",key); 
+                attron(COLOR_PAIR(1));
+                mvprintw(y + 1, x, "%s",key);
+                attroff(COLOR_PAIR(1)); 
             }else if(map->map[y][x]=='g'){
                 const char* black_gold="€";
                 mvprintw(y + 1, x, "%s",black_gold); 
@@ -2057,9 +2472,56 @@ void print_full_map(Map *map, int max_width, int max_height,char* username) {
             }else if(map->map[y][x]=='A'){
                 const char* Arrow="➤";
                 mvprintw(y + 1, x, "%s",Arrow); 
+            }else if(map->map[y][x]=='^'){
+                const char* Dagger="ⴕ";
+                mvprintw(y + 1, x, "%s",Dagger); 
+            }else if(map->map[y][x]=='*'){
+                const char* Magic="⧙";
+                mvprintw(y + 1, x, "%s",Magic); 
+            }else if(map->map[y][x]=='%'){
+                const char* Arrow="➤";
+                mvprintw(y + 1, x, "%s",Arrow); 
             }else if(map->map[y][x]=='W'){
                 const char* Sword="⟆";
                 mvprintw(y + 1, x, "%s",Sword); 
+            }else if(map->map[y][x]=='H'){
+                if(strcmp(settings.main_color,"Red")==0){
+                    attron(COLOR_PAIR(1));
+                }
+                if(strcmp(settings.main_color,"Green")==0){
+                    attron(COLOR_PAIR(2));
+                }
+                if(strcmp(settings.main_color,"Blue")==0){
+                    attron(COLOR_PAIR(3));
+                }
+                if(strcmp(settings.main_color,"Yellow")==0){
+                    attron(COLOR_PAIR(4));
+                }
+                mvprintw(y + 1, x, "H");
+                if(strcmp(settings.main_color,"Red")==0){
+                    attroff(COLOR_PAIR(1));
+                }
+                if(strcmp(settings.main_color,"Green")==0){
+                    attroff(COLOR_PAIR(2));
+                }
+                if(strcmp(settings.main_color,"Blue")==0){
+                    attroff(COLOR_PAIR(3));
+                }
+                if(strcmp(settings.main_color,"Yellow")==0){
+                    attroff(COLOR_PAIR(4));
+                } 
+            }else if(map->map[y][x]=='2'){
+                attron(COLOR_PAIR(2));
+                mvprintw(y + 1, x, "@");
+                attroff(COLOR_PAIR(2));
+            }else if(map->map[y][x]=='1'){
+                attron(COLOR_PAIR(1));
+                mvprintw(y + 1, x, "@");
+                attroff(COLOR_PAIR(1));
+            }else if(map->map[y][x]=='&'){
+                attron(COLOR_PAIR(3));
+                mvprintw(y + 1, x, "&");
+                attroff(COLOR_PAIR(3));
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
 
@@ -2088,7 +2550,9 @@ void print_selected_room(Map *map, char* username,int room_num,int**visible){
         for (int x = selected_room.x; x < selected_room.x + selected_room.width; x++) {
             if(map->map[y][x]=='9'){
                 const char* key="△";
-                mvprintw(y + 1, x, "%s",key);
+                attron(COLOR_PAIR(4));
+                mvprintw(y + 1, x, "%s",key);                
+                attroff(COLOR_PAIR(4));
                 visible[y][x]=1;               
             }else if(map->map[y][x]=='8'){
                 const char* tale=".";
@@ -2102,9 +2566,15 @@ void print_selected_room(Map *map, char* username,int room_num,int**visible){
                 const char* secret_door="-";
                 mvprintw(y + 1, x, "%s",secret_door); 
                 visible[y][x]=1; 
+            }else if(map->map[y][x]=='3'){
+                const char* secret_door="?";
+                mvprintw(y + 1, x, "%s",secret_door); 
+                visible[y][x]=1; 
             }else if(map->map[y][x]=='t'){
                 const char* visible_trap="∧";
+                attron(COLOR_PAIR(1));
                 mvprintw(y + 1, x, "%s",visible_trap); 
+                attroff(COLOR_PAIR(1)); 
                 visible[y][x]=1; 
             }else if(map->map[y][x]=='F'){
                 const char* food="F";
@@ -2130,10 +2600,63 @@ void print_selected_room(Map *map, char* username,int room_num,int**visible){
                 const char* Arrow="➤";
                 mvprintw(y + 1, x, "%s",Arrow); 
                 visible[y][x]=1;
+            }else if(map->map[y][x]=='^'){
+                const char* Dagger="ⴕ";
+                mvprintw(y + 1, x, "%s",Dagger); 
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='*'){
+                const char* Magic="⧙";
+                mvprintw(y + 1, x, "%s",Magic); 
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='%'){
+                const char* Arrow="➤";
+                mvprintw(y + 1, x, "%s",Arrow); 
+                visible[y][x]=1;
             }else if(map->map[y][x]=='W'){
                 const char* Sword="⟆";
                 mvprintw(y + 1, x, "%s",Sword); 
                 visible[y][x]=1;
+            }else if(map->map[y][x]=='2'){
+                attron(COLOR_PAIR(2));
+                mvprintw(y + 1, x, "@");
+                attroff(COLOR_PAIR(2));
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='1'){
+                attron(COLOR_PAIR(1));
+                mvprintw(y + 1, x, "@");
+                attroff(COLOR_PAIR(1));
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='&'){
+                attron(COLOR_PAIR(3));
+                mvprintw(y + 1, x, "&");
+                attroff(COLOR_PAIR(3));
+                visible[y][x]=1;
+            }else if(map->map[y][x]=='H'){
+                if(strcmp(settings.main_color,"Red")==0){
+                    attron(COLOR_PAIR(1));
+                }
+                if(strcmp(settings.main_color,"Green")==0){
+                    attron(COLOR_PAIR(2));
+                }
+                if(strcmp(settings.main_color,"Blue")==0){
+                    attron(COLOR_PAIR(3));
+                }
+                if(strcmp(settings.main_color,"Yellow")==0){
+                    attron(COLOR_PAIR(4));
+                }
+                mvprintw(y + 1, x, "H");
+                if(strcmp(settings.main_color,"Red")==0){
+                    attroff(COLOR_PAIR(1));
+                }
+                if(strcmp(settings.main_color,"Green")==0){
+                    attroff(COLOR_PAIR(2));
+                }
+                if(strcmp(settings.main_color,"Blue")==0){
+                    attroff(COLOR_PAIR(3));
+                }
+                if(strcmp(settings.main_color,"Yellow")==0){
+                    attroff(COLOR_PAIR(4));
+                } 
             }else
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
                 visible[y][x]=1; 
@@ -2143,6 +2666,24 @@ void print_selected_room(Map *map, char* username,int room_num,int**visible){
 }
 
 int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* username){
+    /*if(strcmp(settings.main_color,"Red")==0){
+        init_pair(1,COLOR_RED,COLOR_BLACK);
+
+    }
+    if(strcmp(settings.main_color,"Green")==0){
+        init_pair(1,COLOR_GREEN,COLOR_BLACK);
+
+    }
+    if(strcmp(settings.main_color,"Blie")==0){
+        init_pair(1,COLOR_BLUE,COLOR_BLACK);
+    }
+    if(strcmp(settings.main_color,"Yellow")==0){
+        init_pair(1,COLOR_YELLOW,COLOR_BLACK);
+    }*/
+    init_pair(1,COLOR_RED,COLOR_BLACK);
+    init_pair(2,COLOR_GREEN,COLOR_BLACK);
+    init_pair(3,COLOR_BLUE,COLOR_BLACK);
+    init_pair(4,COLOR_YELLOW,COLOR_BLACK);
     load_settings(username);
     int** map_check=*map_check_ptrr;
     int** visible=*visible_ptrr;
@@ -2153,15 +2694,72 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
     int can_grab=1;
     // حرکت براساس کلید عددی
     switch (ch) {
-        case '8':    new_y--; break; // حرکت به بالا (عدد 8)
-        case '2':    new_y++; break; // حرکت به پایین (عدد 2)
-        case '4':    new_x--; break; // حرکت به چپ (عدد 4)
-        case '6':    new_x++; break; // حرکت به راست (عدد 6)
-        case '7':    new_x--; new_y--; break; // حرکت به بالا-چپ (عدد 7)
-        case '9':    new_x++; new_y--; break; // حرکت به بالا-راست (عدد 9)
-        case '1':    new_x--; new_y++; break; // حرکت به پایین-چپ (عدد 1)
-        case '3':    new_x++; new_y++; break; // حرکت به پایین-راست (عدد 3)
-        case '5':    break; // هیچ عملی انجام نمی‌شود (عدد 5)
+        case '8':    
+            new_y--; 
+            if(speed_spel > 0){
+                new_y--;
+            }
+            break; // حرکت به بالا (عدد 8)
+
+        case '2':    
+            new_y++; 
+            if(speed_spel > 0){
+                new_y++;
+            }
+            break; // حرکت به پایین (عدد 2)
+
+        case '4':    
+            new_x--; 
+            if(speed_spel > 0){
+                new_x--;
+            }
+            break; // حرکت به چپ (عدد 4)
+
+        case '6':    
+            new_x++; 
+            if(speed_spel > 0){
+                new_x++;
+            }
+            break; // حرکت به راست (عدد 6)
+
+        case '7':    
+            new_x--; 
+            new_y--; 
+            if(speed_spel > 0){
+                new_x--;
+                new_y--;
+            }
+            break; // حرکت به بالا-چپ (عدد 7)
+
+        case '9':    
+            new_x++; 
+            new_y--; 
+            if(speed_spel > 0){
+                new_x++;
+                new_y--;
+            }
+            break; // حرکت به بالا-راست (عدد 9)
+
+        case '1':    
+            new_x--; 
+            new_y++; 
+            if(speed_spel > 0){
+                new_x--;
+                new_y++;
+            }
+            break; // حرکت به پایین-چپ (عدد 1)
+
+        case '3':    
+            new_x++; 
+            new_y++; 
+            if(speed_spel > 0){
+                new_x++;
+                new_y++;
+            }
+            break; // حرکت به پایین-راست (عدد 3)
+
+        case '5':    
+            break; // هیچ عملی انجام نمی‌شود (عدد 5)
         case 'm':
             show_full_map = !show_full_map; // تغییر حالت نقشه
             clear(); // پاکسازی صفحه
@@ -2174,6 +2772,10 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         case 'f':   
             timeout(-1);
             int ch_func=getch();
+            init_pair(1,COLOR_RED,COLOR_BLACK);
+            init_pair(2,COLOR_GREEN,COLOR_BLACK);
+            init_pair(3,COLOR_BLUE,COLOR_BLACK);
+            init_pair(4,COLOR_YELLOW,COLOR_BLACK);
             switch (ch_func){
                 case '8': // حرکت به بالا
                     while (map_check[hero.y][hero.x] == '.' || map_check[hero.y][hero.x] == '#') {
@@ -2188,7 +2790,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '2': // حرکت به پایین
@@ -2204,7 +2805,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '4': // حرکت به چپ
@@ -2220,7 +2820,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '6': // حرکت به راست
@@ -2236,7 +2835,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '7': // حرکت به بالا-چپ
@@ -2254,7 +2852,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '9': // حرکت به بالا-راست
@@ -2272,7 +2869,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '1': // حرکت به پایین-چپ
@@ -2290,7 +2886,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 case '3': // حرکت به پایین-راست
@@ -2308,27 +2903,108 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     hero.x = new_x;
                     hero.y = new_y;
                     map->map[hero.y][hero.x] = 'H';
-                    mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
                     break;
 
                 default:
                     break;
+            }
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+                mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+                mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+                mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+                attroff(COLOR_PAIR(4));
             }
             return ch;
 
         case 'g':
             timeout(-1);
             int grab_func = getch(); // کلید ورودی را بگیر
-            // حرکت براساس کلید عددی
             switch (grab_func) {
-                case '8':    new_y--; can_grab=0; break; // حرکت به بالا (عدد 8)
-                case '2':    new_y++; can_grab=0; break; // حرکت به پایین (عدد 2)
-                case '4':    new_x--; can_grab=0; break; // حرکت به چپ (عدد 4)
-                case '6':    new_x++; can_grab=0; break; // حرکت به راست (عدد 6)
-                case '7':    new_x--; new_y--; can_grab=0; break; // حرکت به بالا-چپ (عدد 7)
-                case '9':    new_x++; new_y--; can_grab=0; break; // حرکت به بالا-راست (عدد 9)
-                case '1':    new_x--; new_y++; can_grab=0; break; // حرکت به پایین-چپ (عدد 1)
-                case '3':    new_x++; new_y++; can_grab=0; break; // حرکت به پایین-راست (عدد 3)
+                case '8':    
+                    new_y--; 
+                    if(speed_spel > 0){
+                        new_y--;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به بالا (عدد 8)
+
+                case '2':    
+                    new_y++; 
+                    if(speed_spel > 0){
+                        new_y++;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به پایین (عدد 2)
+
+                case '4':    
+                    new_x--; 
+                    if(speed_spel > 0){
+                        new_x--;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به چپ (عدد 4)
+
+                case '6':    
+                    new_x++; 
+                    if(speed_spel > 0){
+                        new_x++;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به راست (عدد 6)
+
+                case '7':    
+                    new_x--; 
+                    new_y--; 
+                    if(speed_spel > 0){
+                        new_x--;
+                        new_y--;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به بالا-چپ (عدد 7)
+
+                case '9':    
+                    new_x++; 
+                    new_y--; 
+                    if(speed_spel > 0){
+                        new_x++;
+                        new_y--;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به بالا-راست (عدد 9)
+
+                case '1':    
+                    new_x--; 
+                    new_y++; 
+                    if(speed_spel > 0){
+                        new_x--;
+                        new_y++;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به پایین-چپ (عدد 1)
+
+                case '3':    
+                    new_x++; 
+                    new_y++; 
+                    if(speed_spel > 0){
+                        new_x++;
+                        new_y++;
+                    }
+                    can_grab = 0; 
+                    break; // حرکت به پایین-راست (عدد 3)
             }
             break;
         case 's':
@@ -2336,12 +3012,18 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             for(int i=hero.y-1;i<=hero.y+1;i++){
                 for(int j=hero.x-1;j<=hero.x+1;j++){
                     if(map_check[i][j]=='8'){
+                        attron(COLOR_PAIR(1));
                         const char* key="∧";
                         mvprintw(i + 1, j, "%s",key);
+                        attroff(COLOR_PAIR(1));
                     }else if(map_check[i][j]=='!'){
+                        attron(COLOR_PAIR(2));
                         mvprintw(i + 1, j, "?"); 
+                        attroff(COLOR_PAIR(2)); 
                     }else if(map_check[i][j]=='?'){
-                        mvprintw(i + 1, j, "?");                    
+                        attron(COLOR_PAIR(1));
+                        mvprintw(i + 1, j, "?"); 
+                        attroff(COLOR_PAIR(2));                   
                     }
                 }
             }
@@ -2356,24 +3038,187 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(-1);
             const char* mace="⚒";
             mvprintw(5, 3, "%s",mace); 
-            const char* Dagger="🗡";
-            mvprintw(6, 3, "%s",Dagger); 
-            const char* Magic_Wand="🪄";
-            mvprintw(7, 3, "%s",Magic_Wand); 
-            const char* Normal_Arrow="➳";
-            mvprintw(8, 3, "%s",Normal_Arrow); 
             const char* Sword="⚔";
-            mvprintw(9,3, "%s",Sword);
-
-            mvprintw(5,5, "(Mace):%d",hero.weapon[0]);
-            mvprintw(6,5, "(Dagger):%d",hero.weapon[1]);
-            mvprintw(7,5, "(Magic Wand):%d",hero.weapon[2]);
-            mvprintw(8,5, "(Normal Arrow):%d",hero.weapon[3]);
-            mvprintw(9,5, "(Sword):%d",hero.weapon[4]);
-            getch();
+            mvprintw(6,3, "%s",Sword);
+            const char* Dagger="🗡";
+            mvprintw(7, 3, "%s",Dagger); 
+            const char* Magic_Wand="🪄";
+            mvprintw(8, 3, "%s",Magic_Wand); 
+            const char* Normal_Arrow="➳";
+            mvprintw(9, 3, "%s",Normal_Arrow); 
+            mvprintw(5,5, "(Mace)         type:short-range            dmage: 5   amount:%d    code: M",hero.weapon[0]);
+            mvprintw(6,5, "(Sword)        type:short-range            dmage: 10  amount:%d    code: S",hero.weapon[4]);
+            mvprintw(7,5, "(Dagger)       type:long-range  range: 5   dmage: 12  amount:%d    code: D",hero.weapon[1]);
+            mvprintw(8,5, "(Magic Wand)   type:long-range  range: 10  dmage: 15  amount:%d    code: W",hero.weapon[2]);
+            mvprintw(9,5, "(Normal Arrow) type:long-range  range: 5   dmage: 5   amount:%d    code: N",hero.weapon[3]);
+            mvprintw(1,5, "Press i to close weapon window  w to put weapon in bag  code of weapon to choose.");
+            mvprintw(1,88, "                                          ");
+            if(hero.using_weapon==-1){
+                mvprintw(1,88, "You don't have weapon in your hand");
+            }
+            if(hero.using_weapon==0){
+                mvprintw(1,88, "You have MACE in your hand");
+            }
+            if(hero.using_weapon==1){
+                mvprintw(1,88, "You have DAGGER in your hand");
+            }
+            if(hero.using_weapon==2){
+                mvprintw(1,88, "You have MAGIC WAND in your hand");
+            }
+            if(hero.using_weapon==3){
+                mvprintw(1,88, "You have ARROW in your hand");
+            }
+            if(hero.using_weapon==4){
+                mvprintw(1,88, "You have SWORD in your hand");
+            }
+            mvprintw(2,5, "                                                            ");
+            int func_w = getch();
+            while(func_w!='i'){
+                mvprintw(5,5, "(Mace)         type:short-range            dmage: 5   amount:%d ",hero.weapon[0]);
+                mvprintw(6,5, "(Sword)        type:short-range            dmage: 10  amount:%d ",hero.weapon[4]);
+                mvprintw(7,5, "(Dagger)       type:long-range  range: 5   dmage: 12  amount:%d ",hero.weapon[1]);
+                mvprintw(8,5, "(Magic Wand)   type:long-range  range: 10  dmage: 15  amount:%d ",hero.weapon[2]);
+                mvprintw(9,5, "(Normal Arrow) type:long-range  range: 5   dmage: 5   amount:%d ",hero.weapon[3]);
+                mvprintw(1,88, "                                          ");
+                if(hero.using_weapon==-1){
+                    mvprintw(1,88, "You don't have weapon in your hand");
+                }
+                if(hero.using_weapon==0){
+                    mvprintw(1,88, "You have MACE in your hand");
+                }
+                if(hero.using_weapon==1){
+                    mvprintw(1,88, "You have DAGGER in your hand");
+                }
+                if(hero.using_weapon==2){
+                    mvprintw(1,88, "You have MAGIC WAND in your hand");
+                }
+                if(hero.using_weapon==3){
+                    mvprintw(1,88, "You have ARROW in your hand");
+                }
+                if(hero.using_weapon==4){
+                    mvprintw(1,88, "You have SWORD in your hand");
+                }
+                mvprintw(1,5, "Press i to close weapon window  w to put weapon in bag  code of weapon to choose");
+                mvprintw(2,5, "                                                            ");
+                if(func_w=='w'){
+                    if(hero.using_weapon!=-1){
+                        hero.weapon[hero.using_weapon]+=1;
+                        hero.using_weapon=-1;   
+                        mvprintw(2,5, "Weapon put in bag                     ");
+                    }
+                    else{
+                        mvprintw(2,5, "You don't have weapon to put in bag...");
+                    }
+                }
+                if(func_w=='M'){
+                    if(hero.using_weapon!=-1){
+                        mvprintw(2,5, "You should put your weapon first...");
+                    }
+                    else{
+                        if(hero.weapon[0]==0){
+                            mvprintw(2,5, "You don't have Mace in your bag");
+                        }
+                        else{
+                            hero.weapon[0]-=1;
+                            hero.using_weapon=0;
+                            mvprintw(2,5, "Mace is choosed                     ");  
+                        }
+                        
+                    }
+                }
+                if(func_w=='S'){
+                    if(hero.using_weapon!=-1){
+                        mvprintw(2,5, "You should put your weapon first...");
+                    }
+                    else{
+                        if(hero.weapon[4]==0){
+                            mvprintw(2,5, "You don't have Sword in your bag");
+                        }
+                        else{
+                            hero.weapon[4]-=1;
+                            hero.using_weapon=4; 
+                            mvprintw(2,5, "Sword is choosed                     ");  
+                        }
+                        
+                    }
+                }
+                if(func_w=='D'){
+                    if(hero.using_weapon!=-1){
+                        mvprintw(2,5, "You should put your weapon first...");
+                    }
+                    else{
+                        if(hero.weapon[1]==0){
+                            mvprintw(2,5, "You don't have Dagger in your bag");
+                        }
+                        else{
+                            hero.weapon[1]-=1;
+                            hero.using_weapon=1;  
+                            mvprintw(2,5, "Dagger is choosed                     ");
+                        }
+                        
+                    }
+                }
+                if(func_w=='W'){
+                    if(hero.using_weapon!=-1){
+                        mvprintw(2,5, "You should put your weapon first...");
+                    }
+                    else{
+                        if(hero.weapon[2]==0){
+                            mvprintw(2,5, "You don't have Magic Wand in your bag");
+                        }
+                        else{
+                            hero.weapon[2]-=1;
+                            hero.using_weapon=2;
+                            mvprintw(2,5, "Magic Wand is choosed                     ");  
+                        }
+                        
+                    }
+                }
+                if(func_w=='N'){
+                    if(hero.using_weapon!=-1){
+                        mvprintw(2,5, "You should put your weapon first...");
+                    }
+                    else{
+                        if(hero.weapon[3]==0){
+                            mvprintw(2,5, "You don't have Normal Arrow in your bag");
+                        }
+                        else{
+                            hero.weapon[3]-=1;
+                            hero.using_weapon=3;  
+                            mvprintw(2,5, "Normal Arrow is choosed                     ");  
+                        }
+                        
+                    }
+                }
+                mvprintw(5,5, "(Mace)         type:short-range            dmage: 5   amount:%d ",hero.weapon[0]);
+                mvprintw(6,5, "(Sword)        type:short-range            dmage: 10  amount:%d ",hero.weapon[4]);
+                mvprintw(7,5, "(Dagger)       type:long-range  range: 5   dmage: 12  amount:%d ",hero.weapon[1]);
+                mvprintw(8,5, "(Magic Wand)   type:long-range  range: 10  dmage: 15  amount:%d ",hero.weapon[2]);
+                mvprintw(9,5, "(Normal Arrow) type:long-range  range: 5   dmage: 5   amount:%d ",hero.weapon[3]);
+                mvprintw(1,5, "Press i to close weapon window  w to put weapon in bag  code of weapon to choose");
+                if(hero.using_weapon==-1){
+                    mvprintw(1,88, "You don't have weapon in your hand");
+                }
+                if(hero.using_weapon==0){
+                    mvprintw(1,88, "You have MACE in your hand");
+                }
+                if(hero.using_weapon==1){
+                    mvprintw(1,88, "You have DAGGER in your hand");
+                }
+                if(hero.using_weapon==2){
+                    mvprintw(1,88, "You have MAGIC WAND in your hand");
+                }
+                if(hero.using_weapon==3){
+                    mvprintw(1,88, "You have ARROW in your hand");
+                }
+                if(hero.using_weapon==4){
+                    mvprintw(1,88, "You have SWORD in your hand");
+                }
+                func_w=getch();
+            }
             display_visible_map(map,visible);
             break;
-         case 'p':
+        case 'p':
             clear();
             timeout(-1);
             const char* healt_spell="💖";
@@ -2383,23 +3228,682 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             const char* damge_spell="☠️";
             mvprintw(7, 3, "%s",damge_spell); 
 
-            mvprintw(5,5, "(healt_spell):%d",hero.spell[0]);
-            mvprintw(6,5, "(speed_spell):%d",hero.spell[1]);
-            mvprintw(7,5, "(damge_spell):%d",hero.spell[2]);
-
-            getch();
+            mvprintw(5,5, "(healt_spell)   code:h   amount:%d",hero.spell[0]);
+            mvprintw(6,5, "(speed_spell)   code:s   amount:%d",hero.spell[1]);
+            mvprintw(7,5, "(damge_spell)   code:d   amount:%d",hero.spell[2]);
+            mvprintw(1,5, "Press p to close spell window  code of spell to use");
+            mvprintw(2,5, "                                                            ");
+            func_w = getch();
+            while(func_w!='p'){
+            mvprintw(5,5, "(healt_spell)   code:h   amount:%d   ",hero.spell[0]);
+            mvprintw(6,5, "(speed_spell)   code:s   amount:%d   ",hero.spell[1]);
+            mvprintw(7,5, "(damge_spell)   code:d   amount:%d   ",hero.spell[2]);
+                if(func_w=='h'){
+                    if(hero.spell[0]==0){
+                        mvprintw(2,5, "you don't have health spell             ");
+                    }
+                    else{
+                        mvprintw(2,5, "health spell choosed     ");
+                        hero.spell[0]-=1;
+                        health_spel=10;
+                    }
+                }
+                if(func_w=='s'){
+                    if(hero.spell[1]==0){
+                        mvprintw(2,5, "you don't have speed spell             ");
+                    }
+                    else{
+                        mvprintw(2,5, "speed spell choosed     ");
+                        hero.spell[1]-=1;
+                        speed_spel=10;
+                    }
+                }
+                if(func_w=='d'){
+                    if(hero.spell[2]==0){
+                        mvprintw(2,5, "you don't have damage spell             ");
+                    }
+                    else{
+                        mvprintw(2,5, "damage spell choosed    ");
+                        hero.spell[2]-=1;
+                        damage_spel=10;
+                    }
+                }
+                mvprintw(5,5, "(healt_spell)   code:h   amount:%d   ",hero.spell[0]);
+                mvprintw(6,5, "(speed_spell)   code:s   amount:%d   ",hero.spell[1]);
+                mvprintw(7,5, "(damge_spell)   code:d   amount:%d   ",hero.spell[2]);
+                func_w=getch();
+            }
             display_visible_map(map,visible);
-            break;           
+            break;
+        
+        case ' ':
+            if(hero.using_weapon==-1){
+                mvprintw(0,0, "Don't have weapon                     ");
+            }
+            else{
+                if(hero.using_weapon==0||hero.using_weapon==4){
+                    for(int i=hero.y-1 ; i<=hero.y+1 ; i++){
+                        for(int j = hero.x-1 ; j <= hero.x+1;j++){
+                            if(map->map[i][j]=='D'){
+                                if(hero.using_weapon==0){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                }
+                                if(hero.using_weapon==4){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                }
+                                if(damage_spel!=0){
+                                    if(hero.using_weapon==0){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                    }
+                                    if(hero.using_weapon==4){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                    }                                    
+                                }
+                                if(map->rooms[which_room(map,hero.x,hero.y)].enemies[0]<=0){
+                                    map->map[i][j]='.';
+                                    map_check[i][j]='.';
+                                }
+                            }
+                            if(map->map[i][j]=='E'){
+                                if(hero.using_weapon==0){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[1]-=5;
+                                }
+                                if(hero.using_weapon==4){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[1]-=10;
+                                }
+                                if(damage_spel!=0){
+                                    if(hero.using_weapon==0){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                    }
+                                    if(hero.using_weapon==4){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                    }                                    
+                                }
+                                if(map->rooms[which_room(map,hero.x,hero.y)].enemies[1]<=0){
+                                    map->map[i][j]='.';
+                                    map_check[i][j]='.';
+                                }
+                            }
+                            if(map->map[i][j]=='G'){
+                                if(hero.using_weapon==0){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[2]-=5;
+                                }
+                                if(hero.using_weapon==4){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[2]-=10;
+                                }
+                                if(damage_spel!=0){
+                                    if(hero.using_weapon==0){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                    }
+                                    if(hero.using_weapon==4){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                    }                                    
+                                }
+                                if(map->rooms[which_room(map,hero.x,hero.y)].enemies[2]<=0){
+                                    map->map[i][j]='.';
+                                    map_check[i][j]='.';
+                                }
+                            }
+                            if(map->map[i][j]=='S'){
+                                if(hero.using_weapon==0){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[3]-=5;
+                                }
+                                if(hero.using_weapon==4){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[3]-=10;
+                                }
+                                if(damage_spel!=0){
+                                    if(hero.using_weapon==0){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                    }
+                                    if(hero.using_weapon==4){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                    }                                    
+                                }
+                                if(map->rooms[which_room(map,hero.x,hero.y)].enemies[3]<=0){
+                                    map->map[i][j]='.';
+                                    map_check[i][j]='.';
+                                }
+                            }
+                            if(map->map[i][j]=='U'){
+                                if(hero.using_weapon==0){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[4]-=5;
+                                }
+                                if(hero.using_weapon==4){
+                                    map->rooms[which_room(map,hero.x,hero.y)].enemies[4]-=10;
+                                }
+                                if(damage_spel!=0){
+                                    if(hero.using_weapon==0){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                    }
+                                    if(hero.using_weapon==4){
+                                        map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                    }                                    
+                                }
+                                if(map->rooms[which_room(map,hero.x,hero.y)].enemies[4]<=0){
+                                    map->map[i][j]='.';
+                                    map_check[i][j]='.';
+                                }
+                            }
+                        }
+                    }
+                }else{
+                    int range=0;
+                    if(hero.using_weapon=='1'||hero.using_weapon=='3'){
+                        range=5;
+                    }
+                    if(hero.using_weapon=='2'){
+                        range=10;
+                    }//(map->map[i-1][j]=='.'||map->map[i-1][j]=='D'||map->map[i-1][j]=='E'||map->map[i-1][j]=='G'||map->map[i-1][j]=='S'||map->map[i-1][j]=='U')&&range>0
+                    timeout(-1);
+                    diraction=getch();
+                    int i=hero.x;
+                    int j=hero.y;
+                    int dameged=0;
+                    switch(diraction){
+                        case '8':
+                            while(map->map[i-1][j]=='.'&&range>0){
+                                i--;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }      
+                            break;
+                        case '9':
+                            while((map->map[i-1][j+1]=='.'||map->map[i-1][j+1]=='D'||map->map[i-1][j+1]=='E'||map->map[i-1][j+1]=='G'||map->map[i-1][j+1]=='S'||map->map[i-1][j+1]=='U')&&range>0){
+                                i--;
+                                j++;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+                        case '6':
+                            while((map->map[i][j+1]=='.'||map->map[i][j+1]=='D'||map->map[i][j+1]=='E'||map->map[i][j+1]=='G'||map->map[i][j+1]=='S'||map->map[i][j+1]=='U')&&range>0){
+                                j++;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+                        case '3':
+                            while((map->map[i+1][j+1]=='.'||map->map[i+1][j+1]=='D'||map->map[i+1][j+1]=='E'||map->map[i+1][j+1]=='G'||map->map[i+1][j+1]=='S'||map->map[i+1][j+1]=='U')&&range>0){
+                                i++;
+                                j++;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+                        case '2':
+                            while((map->map[i+1][j]=='.'||map->map[i+1][j]=='D'||map->map[i+1][j]=='E'||map->map[i+1][j]=='G'||map->map[i+1][j]=='S'||map->map[i+1][j]=='U')&&range>0){
+                                i++;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+                        case '1':
+                            while((map->map[i+1][j-1]=='.'||map->map[i+1][j-1]=='D'||map->map[i+1][j-1]=='E'||map->map[i+1][j-1]=='G'||map->map[i+1][j-1]=='S'||map->map[i+1][j-1]=='U')&&range>0){
+                                i++;
+                                j--;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+                        case '4':
+                            while((map->map[i][j-1]=='.'||map->map[i][j-1]=='D'||map->map[i][j-1]=='E'||map->map[i][j-1]=='G'||map->map[i][j-1]=='S'||map->map[i][j-1]=='U')&&range>0){
+                                j--;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+                        case '7':
+                            while((map->map[i-1][j-1]=='.'||map->map[i-1][j-1]=='D'||map->map[i-1][j-1]=='E'||map->map[i-1][j-1]=='G'||map->map[i-1][j-1]=='S'||map->map[i-1][j-1]=='U')&&range>0){
+                                i--;
+                                j--;
+                                range--;
+                                if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
+                                    break;
+                                }
+                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                    dameged=1;
+                                    break;
+                                }
+                            }
+                            break;
+
+                        default:
+                            break;
+                    }
+                    if(map->map[i][j]=='D'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                        }
+                        if(damage_spel!=0){
+                            if(hero.using_weapon==1){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                            }
+                            if(hero.using_weapon==2){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                                map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                            }
+                            if(hero.using_weapon==3){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                            }
+                        }
+                    }
+                    if(map->map[i][j]=='E'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[1]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[1]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[1]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[1]-=5;
+                        }
+                        if(damage_spel!=0){
+                            if(hero.using_weapon==1){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                            }
+                            if(hero.using_weapon==2){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                                map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                            }
+                            if(hero.using_weapon==3){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                            }
+                        }
+                    }
+                    if(map->map[i][j]=='G'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[2]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[2]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[2]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[2]-=5;
+                        }
+                        if(damage_spel!=0){
+                            if(hero.using_weapon==1){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                            }
+                            if(hero.using_weapon==2){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                                map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                            }
+                            if(hero.using_weapon==3){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                            }
+                        }
+                    }
+                    if(map->map[i][j]=='S'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[3]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[3]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[3]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[3]-=5;
+                        }
+                        if(damage_spel!=0){
+                            if(hero.using_weapon==1){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                            }
+                            if(hero.using_weapon==2){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                                map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                            }
+                            if(hero.using_weapon==3){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                            }
+                        }
+                    }
+                    if(map->map[i][j]=='U'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[4]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[4]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[4]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[4]-=5;
+                        }
+                        if(damage_spel!=0){
+                            if(hero.using_weapon==1){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                            }
+                            if(hero.using_weapon==2){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                                map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                            }
+                            if(hero.using_weapon==3){
+                                map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                            }
+                        }
+                    }
+                    if(dameged==0){
+                        if(hero.using_weapon==1){
+                            map->map[i][j]='^';
+                            map_check[i][j]='^';
+                        }
+                        if(hero.using_weapon==2){
+                            map->map[i][j]='*';
+                            map_check[i][j]='*';
+                        }
+                        if(hero.using_weapon==3){
+                            map->map[i][j]='%';
+                            map_check[i][j]='%';
+                        }
+                    }
+                    //mvprintw(i+1,j,"%c", map->map[i][j]);
+                }
+            }
+            break;
+        case 'a':
+            timeout(-1);
+            if(hero.using_weapon==-1){
+                mvprintw(0,0, "Don't have weapon                     ");
+            }
+            else{
+                if(hero.using_weapon==0||hero.using_weapon==4){
+                    mvprintw(0,0, "choose long-range weapon                     ");
+                }
+                else{
+                    int range;
+                    if(hero.using_weapon=='1'||hero.using_weapon=='3'){
+                        range=5;
+                    }
+                    if(hero.using_weapon=='2'){
+                        range=10;
+                    }
+                    timeout(-1);
+                    int i=hero.x;
+                    int j=hero.y;
+                    int dameged=0;
+                    if(diraction=='8'){
+                        while((map->map[i-1][j]=='.'||map->map[i-1][j]=='D'||map->map[i-1][j]=='E'||map->map[i-1][j]=='G'||map->map[i-1][j]=='S'||map->map[i-1][j]=='U')&&range>0){
+                            i--;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }      
+                    }
+                    if(diraction=='9'){
+                        while((map->map[i-1][j+1]=='.'||map->map[i-1][j+1]=='D'||map->map[i-1][j+1]=='E'||map->map[i-1][j+1]=='G'||map->map[i-1][j+1]=='S'||map->map[i-1][j+1]=='U')&&range>0){
+                            i--;
+                            j++;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(diraction=='6'){
+                        while((map->map[i][j+1]=='.'||map->map[i][j+1]=='D'||map->map[i][j+1]=='E'||map->map[i][j+1]=='G'||map->map[i][j+1]=='S'||map->map[i][j+1]=='U')&&range>0){
+                            j++;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(diraction=='3'){
+                        while((map->map[i+1][j+1]=='.'||map->map[i+1][j+1]=='D'||map->map[i+1][j+1]=='E'||map->map[i+1][j+1]=='G'||map->map[i+1][j+1]=='S'||map->map[i+1][j+1]=='U')&&range>0){
+                            i++;
+                            j++;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(diraction=='2'){
+                        while((map->map[i+1][j]=='.'||map->map[i+1][j]=='D'||map->map[i+1][j]=='E'||map->map[i+1][j]=='G'||map->map[i+1][j]=='S'||map->map[i+1][j]=='U')&&range>0){
+                            i++;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(diraction=='1'){
+                        while((map->map[i+1][j-1]=='.'||map->map[i+1][j-1]=='D'||map->map[i+1][j-1]=='E'||map->map[i+1][j-1]=='G'||map->map[i+1][j-1]=='S'||map->map[i+1][j-1]=='U')&&range>0){
+                            i++;
+                            j--;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(diraction=='4'){
+                        while((map->map[i][j-1]=='.'||map->map[i][j-1]=='D'||map->map[i][j-1]=='E'||map->map[i][j-1]=='G'||map->map[i][j-1]=='S'||map->map[i][j-1]=='U')&&range>0){
+                            j--;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(diraction=='7'){
+                        while((map->map[i-1][j-1]=='.'||map->map[i-1][j-1]=='D'||map->map[i-1][j-1]=='E'||map->map[i-1][j-1]=='G'||map->map[i-1][j-1]=='S'||map->map[i-1][j-1]=='U')&&range>0){
+                            i--;
+                            j--;
+                            range--;
+                            if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
+                                dameged=1;
+                                break;
+                            }
+                        }
+                    }
+                    if(map->map[i][j]=='D'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[0]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[0]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[0]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[0]-=5;
+                        }
+                    }
+                    if(map->map[i][j]=='E'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[1]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[1]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[1]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[1]-=5;
+                        }
+                    }
+                    if(map->map[i][j]=='G'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[2]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[2]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[2]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[2]-=5;
+                        }
+                    }
+                    if(map->map[i][j]=='S'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[3]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[3]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[3]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[3]-=5;
+                        }
+                    }
+                    if(map->map[i][j]=='U'){
+                        if(hero.using_weapon==1){
+                            map->rooms[which_room(map,j,i)].enemies[4]-=12;
+                        }
+                        if(hero.using_weapon==2){
+                            map->rooms[which_room(map,j,i)].enemies[4]-=15;
+                            map->rooms[which_room(map,j,i)].enemies_move[4]=-1;
+                        }
+                        if(hero.using_weapon==3){
+                            map->rooms[which_room(map,j,i)].enemies[4]-=5;
+                        }
+                    }
+                    if(dameged==0){
+                        if(hero.using_weapon==1){
+                            map->map[i][j]='^';
+                            map_check[i][j]='^';
+                        }
+                        if(hero.using_weapon==2){
+                            map->map[i][j]='*';
+                            map_check[i][j]='*';
+                        }
+                        if(hero.using_weapon==3){
+                            map->map[i][j]='%';
+                            map_check[i][j]='%';
+                        }
+                    }
+                }
+            }
+        break;
+        
     }
     // بررسی حرکت معتبر
     if (is_valid_move(map, new_y, new_x)) {    
         map->map[hero.y][hero.x] = map_check[hero.y][hero.x]; // جای قبلی بازیکن را پاک کن
-        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+        if(map->map[hero.y][hero.x]=='2'){
+            attron(COLOR_PAIR(2));
+            mvprintw(hero.y + 1, hero.x, "@");
+            attroff(COLOR_PAIR(2));
+        }
+        else if(map->map[hero.y][hero.x]=='3'){
+            mvprintw(hero.y + 1, hero.x, "?");
+        }
+        else
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
         hero.x = new_x;
         hero.y = new_y;
+        if(ch=='1'||ch=='2'||ch=='3'||ch=='4'||ch=='5'||ch=='6'||ch=='7'||ch=='8'||ch=='9'){
+            int damged=0;
+            for(int i=hero.y-1;i<=hero.y+1;i++){
+                for (int j= hero.x-1; j <= hero.x+1; j++)
+                {
+                    if(map->map[i][j]=='D'){
+                        hero.health-=1;
+                        damged=1;
+                        mvprintw(0,0, "Deamon hurts you!");
+                        break;
+                    }
+                    if(map->map[i][j]=='E'){
+                        hero.health-=2;
+                        damged=1;
+                        mvprintw(0,0, "Fire breath hurts you!");
+                        break;
+                    }
+                    if(map->map[i][j]=='G'){
+                        hero.health-=3;
+                        damged=1;
+                        mvprintw(0,0, "Gaint hurts you!");
+                        break;
+                    }
+                    if(map->map[i][j]=='S'){
+                        hero.health-=3;
+                        damged=1;
+                        mvprintw(0,0, "Snake hurts you!");
+                        break;
+                    }
+                    if(map->map[i][j]=='U'){
+                        hero.health-=4;
+                        damged=1;
+                        mvprintw(0,0, "Undeed hurts you!");
+                        break;
+                    }
+                }
+                if(damged==1){
+                    break;
+                }
+            }
+        }
         if(map->map[hero.y][hero.x]=='.'){
-            mvprintw(0,0, "room_found");
             int room_num=which_room(map,hero.x,hero.y);
+            if(map->rooms[room_num].is_enchant==1){
+                mvprintw(0,0, "Enchant room found   ");
+                in_enchant_room=1;
+            }
+            if(map->rooms[room_num].is_treasure==1){
+                mvprintw(0,0, "treasure room found   ");
+                in_enchant_room=0;
+            }
+            else{
+                mvprintw(0,0, "Regular room found   ");
+                in_enchant_room=0;
+            }
             int close_turn=5;
             print_selected_room(map,username,room_num,visible);
             move_r=0;
@@ -2412,7 +3916,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     for (int j = map->rooms[room_num].x; j < map->rooms[room_num].x+map->rooms[room_num].width; j++)
                     {
                         if(map->map[i][j]=='D'&&chase_steps_deamon>1){
-                            mvprintw(0,0, "                       enemy found %d",chase_steps_deamon);
                             int dx = hero.x - j;
                             int dy = hero.y - i;
                             if (dx > 1) {
@@ -2896,7 +4399,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                         chase_steps_undeed--;
                                     }  
                                 }
-                            }else if (dy <= -1){
+                            }else if (dy < -1){
                                 if(map->map[i-1][j]=='.'){
                                     map->map[i][j]='.';
                                     map->map[i-1][j]='U';
@@ -2922,12 +4425,12 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 }
                             } 
                         }
-                        //print_selected_room(map,username,room_num,visible);
                     }                
                 }
             }
         }
         else if(map_check[hero.y][hero.x]=='#'){
+            in_enchant_room=0;
             chase_steps_deamon=5;
             chase_steps_giant=5;
             chase_steps_fire=5; 
@@ -3015,16 +4518,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             }
             
         }
-           /* for (int i = y-5; i < y+5; i++) {
-                for (int j = x-5; j < x+5; j++) {
-                    // نمایش خانه‌ها فقط در محدوده دید بازیکن
-                    if (0<=i&& 0<=j && j<COLS &&i<LINES &&map_check[i][j]=='#') {
-                        mvprintw(0,0, "goin down  ");
-                       mvprintw(i + 1, j, "%c", map->map[i][j]); // چاپ در مکان مشخص
-                    }
-                }
-            }
-        }*/
+
         else if(map_check[hero.y][hero.x]=='&'){
             timeout(10);
             Room* room = &map->rooms[which_room(map,hero.x,hero.y)];
@@ -3072,6 +4566,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                         napms(2000); 
                         room->opend=1;
                         hero.has_key-=1;
+                        mvprintw(0,0,"                                              ");
                         break;
                     }
                 }
@@ -3123,7 +4618,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
 
             }
             if(room->opend==1){
-                mvprintw(last_y + 1, last_x, "%c", map->map[last_y][last_x]);
+                mvprintw(last_y + 1, last_x, "%c",map->map[last_y][last_x]);
                 map_check[hero.y][hero.x]='2';
             }
             else{
@@ -3137,9 +4632,32 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             map_check[hero.y][hero.x]='.';
             map->map[hero.y][hero.x]= '.';
         }
+        else if(map_check[hero.y][hero.x]=='!'){
+            map_check[hero.y][hero.x]='3';
+            map->map[hero.y][hero.x]= '3';
+        }
+        else if(map_check[hero.y][hero.x]=='?'){
+            map_check[hero.y][hero.x]='3';
+            map->map[hero.y][hero.x]= '3';
+        }
         else if(map_check[hero.y][hero.x]=='8'){
             map_check[hero.y][hero.x]='t';
-            map->map[hero.y][hero.x]= 't';            
+            map->map[hero.y][hero.x]= 't';  
+            mvprintw(0,0,"trap hurts you                                              ");          
+            hero.health-=1;
+        }
+        else if(map_check[hero.y][hero.x]=='T'){
+            
+            attron(COLOR_PAIR(3));
+            attron(A_BOLD);
+            mvprintw((LINES/2)-3,(COLS/2)-31,"🌟🌟CONGRAJULATOIN🌟🌟");
+            mvprintw((LINES/2)-2,(COLS/2)-42,"🌟🌟YOU REACHED TREASURE ROOM🌟🌟");
+            mvprintw((LINES/2)-1,(COLS/2)-42,"🌟🌟YOU WIN🌟🌟");
+            attroff(COLOR_PAIR(3));
+            attroff(A_BOLD);
+            win=1;
+            napms(2000);
+            return 'q';
         }
         else if(map_check[hero.y][hero.x]=='<'){
             mvprintw(0,0,"Click right key...                                              ");
@@ -3195,7 +4713,31 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         else if(map_check[hero.y][hero.x]=='F'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
             if (hero.food_count < MAX_FOOD_INVENTORY){
                 hero.inventory[0]++;
                 hero.food_count++;
@@ -3212,7 +4754,31 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         else if(map_check[hero.y][hero.x]=='$'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
             hero.gold+=rand()%3+5; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
@@ -3224,7 +4790,31 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         else if(map_check[hero.y][hero.x]=='g'){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
             hero.gold+=rand()%3+10; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
@@ -3233,9 +4823,33 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='C'){
+        else if(map_check[hero.y][hero.x]=='C'&&can_grab==1){
             timeout(-1);
-            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            } // جای جدید بازیکن
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
             hero.weapon[0]+=1; 
             map->map[hero.y][hero.x]='.';
@@ -3245,11 +4859,35 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='e'){
+        else if(map_check[hero.y][hero.x]=='e'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
-            hero.weapon[1]+=1; 
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.weapon[1]+=10; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
             mvprintw(0, 0, "Dagger grabed!                      ");
@@ -3257,11 +4895,35 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='N'){
+        else if(map_check[hero.y][hero.x]=='N'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
-            hero.weapon[2]+=1; 
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.weapon[2]+=8; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
             mvprintw(0, 0, "Magic Wand grabed!                      ");
@@ -3269,11 +4931,35 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='A'){
+        else if(map_check[hero.y][hero.x]=='A'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
-            hero.weapon[3]+=1; 
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.weapon[3]+=20; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
             mvprintw(0, 0, "Normal Arrow grabed!                      ");
@@ -3281,10 +4967,34 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='W'){
+        else if(map_check[hero.y][hero.x]=='W'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
             hero.weapon[4]+=1; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
@@ -3293,11 +5003,143 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='s'){
+        else if(map_check[hero.y][hero.x]=='^'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
-            hero.spell[2]+=1; 
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.weapon[1]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "1 Dagger grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='*'&&can_grab==1){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.weapon[2]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "1 Magic Wand grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='%'&&can_grab==1){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.weapon[3]+=1; 
+            map->map[hero.y][hero.x]='.';
+            map_check[hero.y][hero.x]='.';
+            mvprintw(0, 0, "1 Normal Arrow grabed!                      ");
+            getch();
+            timeout(10);
+            mvprintw(0, 0, "                                  ");
+        }
+        else if(map_check[hero.y][hero.x]=='s'&&can_grab==1){
+            timeout(-1);
+            map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.spell[1]+=1; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
             mvprintw(0, 0, "speed spell grabed!                      ");
@@ -3305,11 +5147,35 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='d'){
+        else if(map_check[hero.y][hero.x]=='d'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
-            hero.spell[1]+=1; 
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
+            hero.spell[2]+=1; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
             mvprintw(0, 0, "damage spell grabed!                      ");
@@ -3317,10 +5183,34 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             timeout(10);
             mvprintw(0, 0, "                                  ");
         }
-        else if(map_check[hero.y][hero.x]=='h'){
+        else if(map_check[hero.y][hero.x]=='h'&&can_grab==1){
             timeout(-1);
             map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
+            if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
             mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
             hero.spell[0]+=1; 
             map->map[hero.y][hero.x]='.';
             map_check[hero.y][hero.x]='.';
@@ -3330,7 +5220,31 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             mvprintw(0, 0, "                                  ");
         }
         map->map[hero.y][hero.x] = 'H'; // جای جدید بازیکن
-        mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+        if(strcmp(settings.main_color,"Red")==0){
+                attron(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attron(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attron(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attron(COLOR_PAIR(4));
+            }
+            mvprintw(hero.y + 1, hero.x, "%c", map->map[hero.y][hero.x]);
+            if(strcmp(settings.main_color,"Red")==0){
+                attroff(COLOR_PAIR(1));
+            }
+            if(strcmp(settings.main_color,"Green")==0){
+                attroff(COLOR_PAIR(2));
+            }
+            if(strcmp(settings.main_color,"Blue")==0){
+                attroff(COLOR_PAIR(3));
+            }
+            if(strcmp(settings.main_color,"Yellow")==0){
+                attroff(COLOR_PAIR(4));
+            }
         visible[hero.y][hero.x]=1; 
     }
     return ch;
@@ -3367,7 +5281,7 @@ void print_colored_massage(char *message, int color_pair){
 int is_valid_move(Map *map, int new_y, int new_x) {
     char target = map->map[new_y][new_x];
     // اگر مقصد دیوار، ستون یا خارج از نقشه بود، حرکت نامعتبر است
-    return (target != '|' && target != '-' && target != 'O' && target != ' ');
+    return (target != '|' && target != '-' && target != 'O' && target != ' '&& target != 'D'&& target != 'E'&& target != 'G'&& target != 'S'&& target != 'U');
 }
 int which_room(Map *map, int x, int y) {
     // پیمایش تمام اتاق‌ها
@@ -3393,10 +5307,95 @@ void show_code_temporarily(WINDOW *win, int x, int y,char *code) {
     wrefresh(win);
 }
 void display_visible_map(Map*map, int** visible) {
+    init_pair(1,COLOR_RED,COLOR_BLACK);
+    init_pair(2,COLOR_GREEN,COLOR_BLACK);
+    init_pair(3,COLOR_BLUE,COLOR_BLACK);
+    init_pair(4,COLOR_YELLOW,COLOR_BLACK);
     for (int y = 0; y < LINES; y++) {
         for (int x = 0; x < COLS; x++) {
             if (visible[y][x]) {
-                mvaddch(y+1, x, map->map[y][x]);
+                if(map->map[y][x]=='9'){
+                    const char* key="△";
+                    attron(COLOR_PAIR(4));
+                    mvprintw(y + 1, x, "%s",key);                
+                    attroff(COLOR_PAIR(4));
+                }else if(map->map[y][x]=='8'){
+                    const char* key="∧";
+                    attron(COLOR_PAIR(1));
+                    mvprintw(y + 1, x, "%s",key); 
+                    attroff(COLOR_PAIR(1));
+                }else if(map->map[y][x]=='1'){
+                    const char* key="@";
+                    attron(COLOR_PAIR(1));
+                    mvprintw(y + 1, x, "%s",key);
+                    attroff(COLOR_PAIR(1)); 
+                }else if(map->map[y][x]=='g'){
+                    const char* black_gold="€";
+                    mvprintw(y + 1, x, "%s",black_gold); 
+                }else if(map->map[y][x]=='C'){
+                    const char* Mace="⍑";
+                    mvprintw(y + 1, x, "%s",Mace); 
+                }else if(map->map[y][x]=='e'){
+                    const char* Dagger="ⴕ";
+                    mvprintw(y + 1, x, "%s",Dagger); 
+                }else if(map->map[y][x]=='N'){
+                    const char* Magic="⧙";
+                    mvprintw(y + 1, x, "%s",Magic); 
+                }else if(map->map[y][x]=='A'){
+                    const char* Arrow="➤";
+                    mvprintw(y + 1, x, "%s",Arrow); 
+                }else if(map->map[y][x]=='^'){
+                    const char* Dagger="ⴕ";
+                    mvprintw(y + 1, x, "%s",Dagger); 
+                }else if(map->map[y][x]=='*'){
+                    const char* Magic="⧙";
+                    mvprintw(y + 1, x, "%s",Magic); 
+                }else if(map->map[y][x]=='%'){
+                    const char* Arrow="➤";
+                    mvprintw(y + 1, x, "%s",Arrow); 
+                }else if(map->map[y][x]=='W'){
+                    const char* Sword="⟆";
+                    mvprintw(y + 1, x, "%s",Sword); 
+                }else if(map->map[y][x]=='H'){
+                    if(strcmp(settings.main_color,"Red")==0){
+                        attron(COLOR_PAIR(1));
+                    }
+                    if(strcmp(settings.main_color,"Green")==0){
+                        attron(COLOR_PAIR(2));
+                    }
+                    if(strcmp(settings.main_color,"Blue")==0){
+                        attron(COLOR_PAIR(3));
+                    }
+                    if(strcmp(settings.main_color,"Yellow")==0){
+                        attron(COLOR_PAIR(4));
+                    }
+                    mvprintw(y + 1, x, "H");
+                    if(strcmp(settings.main_color,"Red")==0){
+                        attroff(COLOR_PAIR(1));
+                    }
+                    if(strcmp(settings.main_color,"Green")==0){
+                        attroff(COLOR_PAIR(2));
+                    }
+                    if(strcmp(settings.main_color,"Blue")==0){
+                        attroff(COLOR_PAIR(3));
+                    }
+                    if(strcmp(settings.main_color,"Yellow")==0){
+                        attroff(COLOR_PAIR(4));
+                    } 
+                }else if(map->map[y][x]=='2'){
+                    attron(COLOR_PAIR(2));
+                    mvprintw(y + 1, x, "@");
+                    attroff(COLOR_PAIR(2));
+                }else if(map->map[y][x]=='1'){
+                    attron(COLOR_PAIR(1));
+                    mvprintw(y + 1, x, "@");
+                    attroff(COLOR_PAIR(1));
+                }else if(map->map[y][x]=='&'){
+                    attron(COLOR_PAIR(3));
+                    mvprintw(y + 1, x, "&");
+                    attroff(COLOR_PAIR(3));
+                }else
+                    mvprintw(y + 1, x, "%c", map->map[y][x]);
             } else {
                 mvaddch(y+1, x, ' '); // خانه‌های مخفی
             }
@@ -3447,13 +5446,30 @@ void* check_code_timer(void* arg) {
 void* check_code_timer_heal(void* arg) {
     while (1) {
         pthread_mutex_lock(&mutex_heal); // قفل کردن برای دسترسی امن به متغیرها
-        if (difftime(time(NULL), code_start_time_heal) >= 10) {
+        if (difftime(time(NULL), code_start_time_heal) >= 10 && hero.hunger<10) {
             if(hero.health<10){
                 hero.health++;
+                if(health_spel>0){
+                    hero.health++;
+                }
             } // غیرفعال کردن نمایش رمز
-            mvprintw(1, 0, "Your health: %d              ",hero.health); // پاک کردن پیام
+            //mvprintw(1, 0, "Your health: %d              ",hero.health); // پاک کردن پیام
         }
         pthread_mutex_unlock(&mutex_heal); // آزاد کردن قفل
+        usleep(100000); // خواب 100 میلی‌ثانیه برای کاهش مصرف پردازنده
+    }
+    return NULL;
+}
+void* check_code_timer_hunger(void* arg) {
+    while (1) {
+        pthread_mutex_lock(&mutex_hunger); // قفل کردن برای دسترسی امن به متغیرها
+        if (difftime(time(NULL), code_start_time_hunger) >= 10 && hero.hunger<10) {
+            if(hero.hunger<10){
+                hero.hunger++;
+            } // غیرفعال کردن نمایش رمز
+            //mvprintw(1, 0, "Your hunger: %d              ",hero.hunger); // پاک کردن پیام
+        }
+        pthread_mutex_unlock(&mutex_hunger); // آزاد کردن قفل
         usleep(100000); // خواب 100 میلی‌ثانیه برای کاهش مصرف پردازنده
     }
     return NULL;
@@ -3488,7 +5504,7 @@ void food_menu(){
     int n_choices = sizeof(choices) / sizeof(char *);
     menu_win = newwin(10, 40, (LINES - 10) / 2, (COLS - 40) / 2);
     keypad(menu_win, TRUE);
-    mvprintw(0, 0, "Choose witch to eat!  hungr:                 ");
+    mvprintw(0, 0, "Choose witch to eat!  hungr:                   ");
     for (int i = 0; i <= hero.hunger; i++)
     {
         mvprintw(0, 29+i, "#");
@@ -3539,6 +5555,8 @@ void food_menu(){
                 mvprintw(0, 0, "You eat one normal food         ");
                 hero.inventory[0]-=1;
                 hero.food_count-=1;
+                hero.hunger=0;
+                hero.health=10;
                 getch();
                 food_menu();
 
@@ -3593,6 +5611,7 @@ void food_menu(){
             clear();
             break;
     }
+    mvprintw(0, 0, "                                                   ");
 }
 
 void save_matrices(char *username, int** matrices,int i,int j) {
@@ -3628,26 +5647,28 @@ void load_matrices(char *username, int** matrices,int i,int j,FILE *file) {
 }
 void save_hero(FILE *file, Hero *hero) {
     fprintf(file, "Hero:\n");
-    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
             hero->x, hero->y,
             hero->health, hero->hunger, hero->gold,
             hero->inventory[0], hero->inventory[1],
             hero->inventory[2], hero->inventory[3],
             hero->weapon[0], hero->weapon[1],
             hero->weapon[2], hero->weapon[3],
-            hero->weapon[4]);
+            hero->weapon[4],hero->using_weapon, hero->food_count,hero->spell[0],
+            hero->spell[1],hero->spell[2],hero->has_key,hero->has_broken_key);
     fprintf(file, "current floor:%d\n",current_floor);
 }
 void load_hero(FILE *file, Hero *hero) {
     fscanf(file, "Hero:\n");
-    fscanf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
-           &hero->x, &hero->y,
-           &hero->health, &hero->hunger, &hero->gold,
-           &hero->inventory[0], &hero->inventory[1],
-           &hero->inventory[2], &hero->inventory[3],
-           &hero->weapon[0], &hero->weapon[1],
-           &hero->weapon[2], &hero->weapon[3],
-           &hero->weapon[4]);
+    fscanf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+            &hero->x, &hero->y,
+            &hero->health, &hero->hunger, &hero->gold,
+            &hero->inventory[0], &hero->inventory[1],
+            &hero->inventory[2], &hero->inventory[3],
+            &hero->weapon[0], &hero->weapon[1],
+            &hero->weapon[2], &hero->weapon[3],
+            &hero->weapon[4],&hero->using_weapon, &hero->food_count,&hero->spell[0],
+            &hero->spell[1],&hero->spell[2],&hero->has_key,&hero->has_broken_key);
     fscanf(file, "current floor:%d\n",&current_floor);
 }
 void save_room(FILE *file, Room *room) {
@@ -3696,6 +5717,9 @@ void load_all_rooms(FILE *file, Map *map) {
     for (int i = 0; i < total_rooms; i++) {
         load_room(file, &map->rooms[i]);
     }
+}
+double get_elapsed_time(struct timespec start, struct timespec end) {
+    return (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 }
 void enemis_move(Map *map,int***map_check_ptr,int***visible_ptr,char* username,char enemy,int room_num,int i, int j){
     int dx = hero.x - j;
@@ -3798,6 +5822,61 @@ void enemis_move(Map *map,int***map_check_ptr,int***visible_ptr,char* username,c
             }  
         }
     } 
+}
+void update_player_score(char *filename, char *target_username, int score_change, int gold_change) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("Error opening leaderboard file!\n");
+        return;
+    }
+
+    Player players[100]; // حداکثر ۱۰۰ بازیکن
+    int player_count = 0;
+    char line[256];
+
+    // خواندن اطلاعات بازیکنان از فایل
+    while (fgets(line, sizeof(line), file)) {
+        sscanf(line, "%[^,],%d,%d,%d,%ld", 
+               players[player_count].username, 
+               &players[player_count].total_score, 
+               &players[player_count].total_gold, 
+               &players[player_count].games_played, 
+               &players[player_count].first_game_time);
+        player_count++;
+    }
+    fclose(file);
+
+    // جستجوی کاربر و تغییر اطلاعات
+    int found = 0;
+    for (int i = 0; i < player_count; i++) {
+        if (strcmp(players[i].username, target_username) == 0) {
+            players[i].total_score += score_change;  // افزایش امتیاز
+            players[i].total_gold += gold_change;// افزایش تعداد بازی‌ها
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found) {
+        return;
+    }
+
+    // بازنویسی فایل با اطلاعات جدید
+    file = fopen(filename, "w");
+    if (file == NULL) {
+        printf("Error opening leaderboard file for writing!\n");
+        return;
+    }
+
+    for (int i = 0; i < player_count; i++) {
+        fprintf(file, "%s,%d,%d,%d,%ld\n", 
+                players[i].username, 
+                players[i].total_score, 
+                players[i].total_gold, 
+                players[i].games_played, 
+                players[i].first_game_time);
+    }
+    fclose(file);
 }
 /*
 void spawn_enemies(EnemyList *list, int map_width, int map_height) {
