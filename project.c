@@ -123,7 +123,7 @@ int damage_increase=1;
 int in_enchant_room;
 int win;
 int lose;
-
+int music_played;
 int **map_check;
 int** visible;
 int **map_check_floor_2;
@@ -177,6 +177,7 @@ int is_username_taken(const char *username);
 void user_entrance_menu();
 void reset_password_help();
 void before_game_menu(char* username);
+void before_game_menuـno_continue(char* username);
 void start_new_game(char *username);
 void continue_game(char *username);
 void view_leaderboard(char *username,int j);
@@ -214,7 +215,7 @@ void print_selected_room(Map *map, char* username,int room_num,int** visible);
 int which_room(Map *map,int x,int y);
 void show_rooms(Map *map,int x,int y);
 void kill_music();
-void play_music();
+void play_music(int room_type);
 void print_colored_massage(char *message, int color_pair);
 
 void add_food_to_hero();
@@ -237,7 +238,7 @@ int main() {
     settings.difficulty=1;
     current_floor =1;
     strcpy(settings.main_color,"Red");
-    //strcpy (settings.music,"Track1");
+    music_played=-1;
     settings.selected_music=1;
     enemies.enemies = (Enemy*)malloc(MAX_ENEMIES * sizeof(Enemy));
     enemies.count = 0;
@@ -247,8 +248,8 @@ int main() {
     int chase_steps_undeed=5;
     in_enchant_room=0;
     diraction=0;
-    win=0;
-    lose=0;
+    win=-1;
+    lose=-1;
     if (pthread_create(&timer_thread, NULL, check_code_timer, NULL) != 0) {
         perror("Failed to create timer thread");
         return 1;
@@ -601,79 +602,22 @@ void user_entrance_menu(){
         getch();
         delwin(input_win);
         clear();
-        before_game_menu(username);
-/*
-        // Show options for new game or continue game
-        WINDOW *menu_win;
-        int highlight = 1;
-        int choice = 0;
-        int c;
-
-        char *choices[] = {
-            "Start New Game",
-            "Continue Previous Game",
-            "View Leaderboard",
-            "Exit"
-        };
-        int n_choices = sizeof(choices) / sizeof(char *);
-
-        menu_win = newwin(10, 40, (LINES - 10) / 2, (COLS - 40) / 2);
-        keypad(menu_win, TRUE);
-        mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
-        refresh();
-        print_menu(menu_win, highlight, choices, n_choices);
-
-        while (1) {
-            c = wgetch(menu_win);
-            switch (c) {
-                case KEY_UP:
-                    if (highlight == 1)
-                        highlight = n_choices;
-                    else
-                        --highlight;
-                    break;
-                case KEY_DOWN:
-                    if (highlight == n_choices)
-                        highlight = 1;
-                    else
-                        ++highlight;
-                    break;
-                case 10: // Enter key
-                    choice = highlight;
-                    break;
-                default:
-                    refresh();
-                    break;
+        if(win==-1&&lose==-1){
+            before_game_menuـno_continue(username);
+        }
+        else{
+            char filename_h[60];
+            snprintf(filename_h, sizeof(filename_h), "%s_hero.txt", username);    
+            FILE *file_player = fopen(filename_h, "r");
+            load_hero(file_player,&hero);
+            fclose(file_player);
+            if(win==0&&lose==0){
+                before_game_menu(username);
             }
-            print_menu(menu_win, highlight, choices, n_choices);
-            if (choice != 0)
-                break;
+            else{
+                before_game_menuـno_continue(username);
+            }
         }
-        clrtoeol();
-        refresh();
-        delwin(menu_win);
-
-        // Handle the user's choice
-        switch (choice) {
-            case 1:
-                // Start a new game
-                clear();
-                start_new_game(username);
-                break;
-            case 2:
-                // Continue the previous game
-                clear();
-                continue_game(username);
-                break;
-            case 3:
-                //clear();
-                view_leaderboard(username);
-                break;
-            case 4:
-                // Exit
-                break;
-        }
-    }*/
     } else {
         mvwprintw(input_win, 5, 1, "Invalid username or password");
         wrefresh(input_win);
@@ -739,8 +683,6 @@ void reset_password_help() {
         mvwprintw(input_win, 6, 1, "Your password is: %s",stored_password);
     } else {
         mvwprintw(input_win, 5, 1, "Invalid email. Please try later.");
-        //getch();
-        //user_entrance_menu();
     }
     wrefresh(input_win);
     getch();
@@ -810,11 +752,6 @@ void guest_entrance(){
     }    
 }
 void before_game_menu(char* username){
-/*    mvwprintw(input_win, 5, 1, "Login successful");
-    wrefresh(input_win);
-    getch();
-    delwin(input_win);
-*/
     // Show options for new game or continue game
     timeout(-1);
     WINDOW *menu_win;
@@ -883,14 +820,14 @@ void before_game_menu(char* username){
             //clear();
             view_leaderboard(username,0);
             clear();
-            before_game_menu(username);
+            before_game_menuـno_continue(username);
             break;
         case 4:
             // Exit
             clear();
             display_settings_menu(username);
             clear();
-            before_game_menu(username);
+            before_game_menuـno_continue(username);
             break;        
         case 5:
             // Exit
@@ -899,7 +836,88 @@ void before_game_menu(char* username){
             break;
     }
 }
+void before_game_menuـno_continue(char* username){
+    // Show options for new game or continue game
+    timeout(-1);
+    WINDOW *menu_win;
+    int highlight = 1;
+    int choice = 0;
+    int c;
+
+    char *choices[] = {
+        "Start New Game",
+        "View Leaderboard",
+        "Settings",
+        "Exit"
+    };
+    int n_choices = sizeof(choices) / sizeof(char *);
+
+    menu_win = newwin(10, 40, (LINES - 10) / 2, (COLS - 40) / 2);
+    keypad(menu_win, TRUE);
+    mvprintw(0, 0, "Use arrow keys to navigate and Enter to select");
+    refresh();
+    print_menu(menu_win, highlight, choices, n_choices);
+
+    while (1) {
+        c = wgetch(menu_win);
+        switch (c) {
+            case KEY_UP:
+                if (highlight == 1)
+                    highlight = n_choices;
+                else
+                    --highlight;
+                break;
+            case KEY_DOWN:
+                if (highlight == n_choices)
+                    highlight = 1;
+                else
+                    ++highlight;
+                break;
+            case 10: // Enter key
+                choice = highlight;
+                break;
+            default:
+                refresh();
+                break;
+        }
+        print_menu(menu_win, highlight, choices, n_choices);
+        if (choice != 0)
+            break;
+    }
+    clrtoeol();
+    refresh();
+    delwin(menu_win);
+
+    // Handle the user's choice
+    switch (choice) {
+        case 1:
+            // Start a new game
+            clear();
+            start_new_game(username);
+            break;
+        case 2:
+            //clear();
+            view_leaderboard(username,0);
+            clear();
+            before_game_menuـno_continue(username);
+            break;
+        case 3:
+            // Exit
+            clear();
+            display_settings_menu(username);
+            clear();
+            before_game_menuـno_continue(username);
+            break;        
+        case 4:
+            // Exit
+            clear();
+            start_menu();
+            break;
+    }
+}
 void start_new_game(char *username) {
+    win=0;
+    lose=0;
     hero.food_count=0;
     hero.health=10;
     hero.hunger=0;
@@ -977,7 +995,7 @@ void start_new_game(char *username) {
         }
     }
     print_map(&map, max_width, max_height,username);
-    play_music();
+    play_music(0);
     load_settings(username);
     char quit;
 
@@ -994,8 +1012,16 @@ void start_new_game(char *username) {
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     timeout(10);
     while (1) {
-        if(hero.health==0){
+        if(hero.health<=0){
             lose=1;
+            clear();
+            mvprintw(LINES/2-2, (COLS/2), "|~~~~~~~~~~~~~~~~|");
+            mvprintw(LINES/2-1, (COLS/2), "|                |");
+            mvprintw(LINES/2, (COLS/2)  , "|    YOU LOSE    |");
+            mvprintw(LINES/2+1, (COLS/2), "|                |");
+            mvprintw(LINES/2+2, (COLS/2), "|~~~~~~~~~~~~~~~~|");
+            refresh();
+            usleep(2000000);
             break;
         }
         mvprintw(0, 39, "                         ");
@@ -1013,8 +1039,7 @@ void start_new_game(char *username) {
                 if(health_spel>0){
                     hero.health++;
                 }
-            } // غیرفعال کردن نمایش رمز
-            //mvprintw(1, 0, "Your health: %d              ",hero.health);// غیرفعال کردن نمایش رمز
+            } 
             pthread_mutex_lock(&mutex_heal);
             code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
             pthread_mutex_unlock(&mutex_heal);
@@ -1048,7 +1073,6 @@ void start_new_game(char *username) {
 
     elapsed_time = get_elapsed_time(start_time, end_time);
     hero.play_timer=elapsed_time;
-    printf("elapsed time : %.2f sec\n", elapsed_time);
 
     char filename[60];
     snprintf(filename, sizeof(filename), "%s_game.txt", username);
@@ -1069,7 +1093,7 @@ void start_new_game(char *username) {
     save_matrices(username,map_floor_4.map,max_height,max_width);
     save_matrices(username,map_check_floor_4,max_height,max_width);
     save_matrices(username,visible_floor_4,max_height,max_width);
-    update_player_score("leaderboard.txt",username,hero.gold,hero.gold);
+    
     char filename_h[60];
     snprintf(filename_h, sizeof(filename_h), "%s_hero.txt", username);    
     FILE *file_player = fopen(filename_h, "w");
@@ -1106,7 +1130,20 @@ void start_new_game(char *username) {
     free(visible_floor_2);
     free(visible_floor_3);
     free(visible_floor_4);
-    before_game_menu(username);
+    kill_music();
+    clear();
+    if(strcmp(username,"guest")==0){
+        guest_entrance();
+    }
+    else if(win!=0||lose!=0){
+        if(win==1){
+            update_player_score("leaderboard.txt",username,100+hero.gold,hero.gold);
+        }
+        before_game_menuـno_continue(username);
+    }
+    else{
+        before_game_menu(username);
+    }
     refresh();
 }
 void continue_game(char *username) {
@@ -1214,7 +1251,7 @@ void continue_game(char *username) {
         default:
             break;
     }
-    play_music();
+    play_music(0);
     load_settings(username);
     char quit;
     timeout(10);
@@ -1223,8 +1260,15 @@ void continue_game(char *username) {
     map_check_ptr_floor1=&map_check;
     visible_ptr_floor1=&visible;
     while (1) {
-        mvprintw(2,0,"%s",settings.main_color);
-        //clear();
+        if(hero.health<=0){
+            lose=1;
+            break;
+        }
+        mvprintw(0, 39, "                         ");
+        mvprintw(0, 40, "Your health:");
+        for(int i=0 ;i< hero.health;i++){
+            mvprintw(0, 54+i, "#");
+        }
         if (code_shown && difftime(time(NULL), code_start_time) >= 30) {
                 mvprintw(0,COLS-10, "              "); // پاک کردن پیام
                 code_shown = false; // غیرفعال کردن نمایش رمز
@@ -1235,8 +1279,7 @@ void continue_game(char *username) {
                 if(health_spel>0){
                     hero.health++;
                 }
-            } // غیرفعال کردن نمایش رمز
-            //mvprintw(1, 0, "Your health: %d              ",hero.health);
+            }
             pthread_mutex_lock(&mutex_heal);
             code_start_time_heal = time(NULL); // زمان شروع نمایش رمز
             pthread_mutex_unlock(&mutex_heal);
@@ -1292,7 +1335,6 @@ void continue_game(char *username) {
     save_matrices(username,map_floor_4.map,max_height,max_width);
     save_matrices(username,map_check_floor_4,max_height,max_width);
     save_matrices(username,visible_floor_4,max_height,max_width);
-    update_player_score("leaderboard.txt",username,hero.gold,hero.gold);
     file_player = fopen(filename_h, "w");
     save_hero(file_player,&hero);
     save_all_rooms(file_player,&map);
@@ -1326,7 +1368,20 @@ void continue_game(char *username) {
     free(visible_floor_2);
     free(visible_floor_3);
     free(visible_floor_4);
-    before_game_menu(username);
+    kill_music();
+    if(strcmp(username,"guest")==0){
+        guest_entrance();
+    }
+    else if(win!=0||lose!=0){
+        
+        if(win==1){
+            update_player_score("leaderboard.txt",username, 100+hero.gold ,hero.gold);
+        }
+        before_game_menuـno_continue(username);
+    }
+    else{
+        before_game_menu(username);
+    }
     refresh();
 }
 
@@ -2016,7 +2071,7 @@ void add_pillars_stair_traps(Map *map) {
                     int px = room->x + 2 + rand() % (room->width - 4);
                     int py = room->y + 2 + rand() % (room->height - 4);
                     if (map->map[py][px] == '.') {
-                        map->map[py][px] = 'F'; // (Monster)
+                        map->map[py][px] = 'E'; // (Monster)
                         map->rooms[i].enemies[1]=10;
                     }
                 } 
@@ -2145,7 +2200,7 @@ void add_pillars_stair_traps(Map *map) {
                         int px = room->x + 2 + rand() % (room->width - 4);
                         int py = room->y + 2 + rand() % (room->height - 4);
                         if (map->map[py][px] == '.') {
-                            map->map[py][px] = 'F'; // (Monster)
+                            map->map[py][px] = 'E'; // (Monster)
                             map->rooms[i].enemies[1]=10;
                         }
                     } 
@@ -2199,7 +2254,7 @@ void add_pillars_stair_traps(Map *map) {
                         int px = room->x + 2 + rand() % (room->width - 4);
                         int py = room->y + 2 + rand() % (room->height - 4);
                         if (map->map[py][px] == '.') {
-                            map->map[py][px] = 'F'; // (Monster)
+                            map->map[py][px] = 'E'; // (Monster)
                             map->rooms[i].enemies[1]=10;
                         }
                     } 
@@ -2657,29 +2712,16 @@ void print_selected_room(Map *map, char* username,int room_num,int**visible){
                 if(strcmp(settings.main_color,"Yellow")==0){
                     attroff(COLOR_PAIR(4));
                 } 
-            }else
+            }else{
                 mvprintw(y + 1, x, "%c", map->map[y][x]);
                 visible[y][x]=1; 
-            //map_check[y][x]=1;
+            }
         }
     }
 }
 
 int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* username){
-    /*if(strcmp(settings.main_color,"Red")==0){
-        init_pair(1,COLOR_RED,COLOR_BLACK);
 
-    }
-    if(strcmp(settings.main_color,"Green")==0){
-        init_pair(1,COLOR_GREEN,COLOR_BLACK);
-
-    }
-    if(strcmp(settings.main_color,"Blie")==0){
-        init_pair(1,COLOR_BLUE,COLOR_BLACK);
-    }
-    if(strcmp(settings.main_color,"Yellow")==0){
-        init_pair(1,COLOR_YELLOW,COLOR_BLACK);
-    }*/
     init_pair(1,COLOR_RED,COLOR_BLACK);
     init_pair(2,COLOR_GREEN,COLOR_BLACK);
     init_pair(3,COLOR_BLUE,COLOR_BLACK);
@@ -3287,19 +3329,24 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             if(map->map[i][j]=='D'){
                                 if(hero.using_weapon==0){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                    mvprintw(0,(COLS/2)+5, "you hurt deamon 5 unit             ");
                                 }
                                 if(hero.using_weapon==4){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                    mvprintw(0,(COLS/2)+5, "you hurt deamon 10 unit               ");
                                 }
                                 if(damage_spel!=0){
                                     if(hero.using_weapon==0){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                        mvprintw(0,(COLS/2)+5, "you hurt deamon 10               ");
                                     }
                                     if(hero.using_weapon==4){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                        mvprintw(0,(COLS/2)+5, "you hurt deamon 20               ");
                                     }                                    
                                 }
                                 if(map->rooms[which_room(map,hero.x,hero.y)].enemies[0]<=0){
+                                    mvprintw(0,(COLS/2)+5, "Deamon killed               ");
                                     map->map[i][j]='.';
                                     map_check[i][j]='.';
                                 }
@@ -3307,19 +3354,24 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             if(map->map[i][j]=='E'){
                                 if(hero.using_weapon==0){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[1]-=5;
+                                    mvprintw(0,(COLS/2)+5, "you hurt fire breath 5               ");
                                 }
                                 if(hero.using_weapon==4){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[1]-=10;
+                                    mvprintw(0,(COLS/2)+5, "you hurt fire breath 10               ");
                                 }
                                 if(damage_spel!=0){
                                     if(hero.using_weapon==0){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                        mvprintw(0,(COLS/2)+5, "you hurt fire breath 10               ");
                                     }
                                     if(hero.using_weapon==4){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                        mvprintw(0,(COLS/2)+5, "you hurt fire breath 20               ");
                                     }                                    
                                 }
                                 if(map->rooms[which_room(map,hero.x,hero.y)].enemies[1]<=0){
+                                    mvprintw(0,(COLS/2)+5, "fire breath killed              ");
                                     map->map[i][j]='.';
                                     map_check[i][j]='.';
                                 }
@@ -3327,19 +3379,24 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             if(map->map[i][j]=='G'){
                                 if(hero.using_weapon==0){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[2]-=5;
+                                    mvprintw(0,(COLS/2)+5, "you hurt gaint 5               ");
                                 }
                                 if(hero.using_weapon==4){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[2]-=10;
+                                    mvprintw(0,(COLS/2)+5, "you hurt gaint 10               ");
                                 }
                                 if(damage_spel!=0){
                                     if(hero.using_weapon==0){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                        mvprintw(0,(COLS/2)+5, "you hurt gaint 10               ");
                                     }
                                     if(hero.using_weapon==4){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                        mvprintw(0,(COLS/2)+5, "you hurt gaint 10               ");
                                     }                                    
                                 }
                                 if(map->rooms[which_room(map,hero.x,hero.y)].enemies[2]<=0){
+                                    mvprintw(0,(COLS/2)+5, "gaint killed               ");
                                     map->map[i][j]='.';
                                     map_check[i][j]='.';
                                 }
@@ -3347,19 +3404,24 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             if(map->map[i][j]=='S'){
                                 if(hero.using_weapon==0){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[3]-=5;
+                                    mvprintw(0,(COLS/2)+5, "you hurt snke 5               ");
                                 }
                                 if(hero.using_weapon==4){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[3]-=10;
+                                    mvprintw(0,(COLS/2)+5, "you hurt gaint 10               ");
                                 }
                                 if(damage_spel!=0){
                                     if(hero.using_weapon==0){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                        mvprintw(0,(COLS/2)+5, "you hurt gaint 10               ");
                                     }
                                     if(hero.using_weapon==4){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                        mvprintw(0,(COLS/2)+5, "you hurt gaint 20               ");
                                     }                                    
                                 }
                                 if(map->rooms[which_room(map,hero.x,hero.y)].enemies[3]<=0){
+                                    mvprintw(0,(COLS/2)+5, "gaint killed               ");
                                     map->map[i][j]='.';
                                     map_check[i][j]='.';
                                 }
@@ -3367,19 +3429,24 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             if(map->map[i][j]=='U'){
                                 if(hero.using_weapon==0){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[4]-=5;
+                                    mvprintw(0,(COLS/2)+5, "you hurt undeed 5               ");
                                 }
                                 if(hero.using_weapon==4){
                                     map->rooms[which_room(map,hero.x,hero.y)].enemies[4]-=10;
+                                    mvprintw(0,(COLS/2)+5, "you hurt undeed 10               ");
                                 }
                                 if(damage_spel!=0){
                                     if(hero.using_weapon==0){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=5;
+                                        mvprintw(0,(COLS/2)+5, "you hurt undeed 10               ");
                                     }
                                     if(hero.using_weapon==4){
                                         map->rooms[which_room(map,hero.x,hero.y)].enemies[0]-=10;
+                                        mvprintw(0,(COLS/2)+5, "you hurt undeed 20               ");
                                     }                                    
                                 }
                                 if(map->rooms[which_room(map,hero.x,hero.y)].enemies[4]<=0){
+                                    mvprintw(0,(COLS/2)+5, "undeed killed               ");
                                     map->map[i][j]='.';
                                     map_check[i][j]='.';
                                 }
@@ -3401,23 +3468,24 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     int dameged=0;
                     switch(diraction){
                         case '8':
-                            while(map->map[i-1][j]=='.'&&range>0){
+                            while(map_check[i-1][j]=='.'&&range>0){
                                 i--;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
-                                if(map->map[i][j]=='D'||map->map[i][j]=='E'||map->map[i][j]=='G'||map->map[i][j]=='S'||map->map[i][j]=='U'){
-                                    dameged=1;
-                                    break;
-                                }
                             }      
+                            if(map_check[i-1][j]=='D'||map_check[i-1][j]=='E'||map_check[i-1][j]=='g'||map_check[i-1][j]=='S'||map_check[i-1][j]=='U'){
+                                dameged=1;
+                            }
                             break;
                         case '9':
                             while((map->map[i-1][j+1]=='.'||map->map[i-1][j+1]=='D'||map->map[i-1][j+1]=='E'||map->map[i-1][j+1]=='G'||map->map[i-1][j+1]=='S'||map->map[i-1][j+1]=='U')&&range>0){
                                 i--;
                                 j++;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3431,6 +3499,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             while((map->map[i][j+1]=='.'||map->map[i][j+1]=='D'||map->map[i][j+1]=='E'||map->map[i][j+1]=='G'||map->map[i][j+1]=='S'||map->map[i][j+1]=='U')&&range>0){
                                 j++;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3445,6 +3514,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 i++;
                                 j++;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3458,6 +3528,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             while((map->map[i+1][j]=='.'||map->map[i+1][j]=='D'||map->map[i+1][j]=='E'||map->map[i+1][j]=='G'||map->map[i+1][j]=='S'||map->map[i+1][j]=='U')&&range>0){
                                 i++;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3472,6 +3543,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 i++;
                                 j--;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3485,6 +3557,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                             while((map->map[i][j-1]=='.'||map->map[i][j-1]=='D'||map->map[i][j-1]=='E'||map->map[i][j-1]=='G'||map->map[i][j-1]=='S'||map->map[i][j-1]=='U')&&range>0){
                                 j--;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3499,6 +3572,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 i--;
                                 j--;
                                 range--;
+                                mvprintw(0,(COLS/2)+5, "-%d-%d",i,j);
                                 if (i < 0 || i >= LINES || j < 0 || j >= COLS) {
                                     break;
                                 }
@@ -3535,6 +3609,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 map->rooms[which_room(map,j,i)].enemies[0]-=5;
                             }
                         }
+                        mvprintw(0,(COLS/2)+5, "you hurt gaint               ");
                     }
                     if(map->map[i][j]=='E'){
                         if(hero.using_weapon==1){
@@ -3559,6 +3634,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 map->rooms[which_room(map,j,i)].enemies[0]-=5;
                             }
                         }
+                        mvprintw(0,(COLS/2)+5, "you hurt gaint               ");
                     }
                     if(map->map[i][j]=='G'){
                         if(hero.using_weapon==1){
@@ -3583,6 +3659,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 map->rooms[which_room(map,j,i)].enemies[0]-=5;
                             }
                         }
+                        mvprintw(0,(COLS/2)+5, "you hurt gaint               ");
                     }
                     if(map->map[i][j]=='S'){
                         if(hero.using_weapon==1){
@@ -3607,6 +3684,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 map->rooms[which_room(map,j,i)].enemies[0]-=5;
                             }
                         }
+                        mvprintw(0,(COLS/2)+5, "you hurt gaint               ");
                     }
                     if(map->map[i][j]=='U'){
                         if(hero.using_weapon==1){
@@ -3631,6 +3709,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 map->rooms[which_room(map,j,i)].enemies[0]-=5;
                             }
                         }
+                        mvprintw(0,(COLS/2)+5, "you hurt gaint               ");
                     }
                     if(dameged==0){
                         if(hero.using_weapon==1){
@@ -3857,35 +3936,40 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     if(map->map[i][j]=='D'){
                         hero.health-=1;
                         damged=1;
-                        mvprintw(0,0, "Deamon hurts you!");
+                        mvprintw(0,(COLS/2)+5, "Deamon hurts you!          ");
                         break;
                     }
                     if(map->map[i][j]=='E'){
                         hero.health-=2;
                         damged=1;
-                        mvprintw(0,0, "Fire breath hurts you!");
+                        mvprintw(0,(COLS/2)+5, "Fire breath hurts you!        ");
                         break;
                     }
                     if(map->map[i][j]=='G'){
                         hero.health-=3;
                         damged=1;
-                        mvprintw(0,0, "Gaint hurts you!");
+                        mvprintw(0,(COLS/2)+5, "Gaint hurts you!           ");
                         break;
                     }
                     if(map->map[i][j]=='S'){
                         hero.health-=3;
                         damged=1;
-                        mvprintw(0,0, "Snake hurts you!");
+                        mvprintw(0,(COLS/2)+5, "Snake hurts you!            ");
                         break;
                     }
                     if(map->map[i][j]=='U'){
                         hero.health-=4;
                         damged=1;
-                        mvprintw(0,0, "Undeed hurts you!");
+                        mvprintw(0,(COLS/2)+5, "Undeed hurts you!         ");
                         break;
                     }
                 }
+                refresh();
                 if(damged==1){
+                    if(hero.health<=0){
+                        lose=0;
+                    }
+                    refresh();
                     break;
                 }
             }
@@ -3893,16 +3977,28 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         if(map->map[hero.y][hero.x]=='.'){
             int room_num=which_room(map,hero.x,hero.y);
             if(map->rooms[room_num].is_enchant==1){
-                mvprintw(0,0, "Enchant room found   ");
+                mvprintw(0,0, "Enchant room found         ");
+                if(music_played!=1){
+                    play_music(1);
+                    music_played=1;
+                }
                 in_enchant_room=1;
             }
-            if(map->rooms[room_num].is_treasure==1){
-                mvprintw(0,0, "treasure room found   ");
+            else if(map->rooms[room_num].is_treasure==1){
+                mvprintw(0,0, "treasure room found        ");
                 in_enchant_room=0;
+                if(music_played!=2){
+                    play_music(2);
+                    music_played=2;
+                }
             }
             else{
-                mvprintw(0,0, "Regular room found   ");
+                mvprintw(0,0, "Regular room found          ");
                 in_enchant_room=0;
+                if(music_played!=0){
+                    play_music(0);
+                    music_played=0;
+                }
             }
             int close_turn=5;
             print_selected_room(map,username,room_num,visible);
@@ -4425,11 +4521,15 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                                 }
                             } 
                         }
-                    }                
+                    }              
                 }
             }
         }
         else if(map_check[hero.y][hero.x]=='#'){
+            if(music_played!=0){
+                play_music(0);
+                music_played=0;
+            }
             in_enchant_room=0;
             chase_steps_deamon=5;
             chase_steps_giant=5;
@@ -4441,7 +4541,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
             while(i<5){
                 if(map_check[y][x+1]=='#'&&move_l==0){
                     while(i<5){
-                        mvprintw(0,0, "goin right %d",i);
                         if(map_check[y][x+1]!='#'){
                             break;
                         }
@@ -4459,7 +4558,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                 }
                 if(map_check[y+1][x]=='#'&& move_u==0){
                    while(i<5){
-                        mvprintw(0,0, "goin down  %d",i);
                         if(map_check[y+1][x]=='#'){
                             y++;
                             mvprintw(y + 1, x, "%c", map->map[y][x]);
@@ -4476,7 +4574,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                 }
                 if(map_check[y-1][x]=='#'&&move_d==0){
                    while(i<5){
-                        mvprintw(0,0, "goin upward%d",i);
                         if(map_check[y-1][x]!='#'){
                             break;
                         }
@@ -4494,7 +4591,6 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                 }
                 if(map_check[y][x-1]=='#'&&move_r==0){
                   while(i<5){
-                        mvprintw(0,0, "goin left  %d",i);
                         if(map_check[y][x-1]!='#'){
                             break;
                         }
@@ -4512,8 +4608,9 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                 }
                 else{
                     break;
-                    mvprintw(0,0, "               ");
+                    
                 }
+                mvprintw(0,0, "                                  ");
                 i++;
             }
             
@@ -4554,13 +4651,13 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     if(rand()%10==0){
                         hero.has_key-=1;
                         hero.has_broken_key+=1;
-                        mvprintw(0,0,"KEY BREAK! You have %d KEY.",hero.has_key);
+                        mvprintw(0,0,"KEY BREAK! You have %d KEY.    ",hero.has_key);
                         napms(2000); 
                     }
                     else{
                         init_pair(4,COLOR_GREEN,COLOR_BLACK);
                         attron(COLOR_PAIR(4));
-                        mvprintw(0,0,"Door unlocked by key! You may proceed.");
+                        mvprintw(0,0,"Door unlocked by key! You may proceed.   ");
                         refresh();
                         attroff(COLOR_PAIR(4));
                         napms(2000); 
@@ -4591,7 +4688,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                         if(attempts==1){
                             init_pair(1,COLOR_YELLOW,COLOR_BLACK);
                             attron(COLOR_PAIR(1));
-                            mvprintw(0,17,"EROR(Two left)");
+                            mvprintw(0,17,"EROR(Two left)           ");
                             refresh();
                             attroff(COLOR_PAIR(1));
                             napms(2000);
@@ -4599,7 +4696,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                         else if(attempts==2){
                             init_pair(2,COLOR_RED,COLOR_YELLOW);
                             attron(COLOR_PAIR(2));
-                            mvprintw(0,17,"EROR(one left)");
+                            mvprintw(0,17,"EROR(one left)               ");
                             refresh();
                             attroff(COLOR_PAIR(2));
                             napms(2000);
@@ -4607,14 +4704,13 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                         else if(attempts==3){
                             init_pair(3,COLOR_RED,COLOR_BLACK);
                             attron(COLOR_PAIR(3));
-                            mvprintw(0,17,"EROR(SECURITY MODE)");
+                            mvprintw(0,17,"EROR(SECURITY MODE)      ");
                             refresh();
                             attroff(COLOR_PAIR(3));
                             napms(2000);    
                         }
                         attempts++;
                 }
-                mvprintw(0,0, "                                                                                                       ");
 
             }
             if(room->opend==1){
@@ -4625,6 +4721,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                 hero.x = last_x;
                 hero.y = last_y;
             }
+            mvprintw(0,0, "                                                                                                       ");
         }
         else if(map_check[hero.y][hero.x]=='9'&& can_grab==1){
             mvprintw(0,0,"KEY GRABED!                                              ");
@@ -4643,24 +4740,96 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
         else if(map_check[hero.y][hero.x]=='8'){
             map_check[hero.y][hero.x]='t';
             map->map[hero.y][hero.x]= 't';  
-            mvprintw(0,0,"trap hurts you                                              ");          
+            mvprintw(0,(COLS/2)+5,"trap hurts you                                              ");          
             hero.health-=1;
         }
         else if(map_check[hero.y][hero.x]=='T'){
-            
+            clear();
             attron(COLOR_PAIR(3));
             attron(A_BOLD);
-            mvprintw((LINES/2)-3,(COLS/2)-31,"🌟🌟CONGRAJULATOIN🌟🌟");
-            mvprintw((LINES/2)-2,(COLS/2)-42,"🌟🌟YOU REACHED TREASURE ROOM🌟🌟");
-            mvprintw((LINES/2)-1,(COLS/2)-42,"🌟🌟YOU WIN🌟🌟");
+            mvprintw((LINES/2)-3,(COLS/2)- 29,"      _=====_                               _=====_");
+            mvprintw((LINES/2)-2,(COLS/2)- 29,"     / _____ \\                             / _____ \\");
+            mvprintw((LINES/2)-1,(COLS/2)- 29,"   +.-'_____'-.---------------------------.-'_____'-.+");
+            mvprintw((LINES/2)+0,(COLS/2)- 29,"  /   |     |  '.                       .'  |  _  |   \\");
+            mvprintw((LINES/2)+1,(COLS/2)- 29," / ___| /|\\ |___ \\                     / ___| /_\\ |___ \\");
+            mvprintw((LINES/2)+2,(COLS/2)- 29,"/ |      |       🌟🌟CONGRATULATION🌟🌟             _ | ;");
+            mvprintw((LINES/2)+3,(COLS/2)- 29,"| | <---    🌟🌟YOU REACHED TREASURE ROOM🌟🌟      (_)| |");
+            mvprintw((LINES/2)+4,(COLS/2)- 29,"| |___   |   ___    🌟🌟YOU WON🌟🌟      ___       ___| ;");
+            mvprintw((LINES/2)+5,(COLS/2)- 29,"|\\    | \\|/ |    /                     \\    | (X) |    /|");
+            mvprintw((LINES/2)+6,(COLS/2)- 29,"| \\   |_____|  .'                       '.  |_____|  .' |");
+            mvprintw((LINES/2)+7,(COLS/2)- 29,"|  '-.______.-'                           '-._____.-'   |");
+            mvprintw((LINES/2)+8,(COLS/2)- 29,"|                       |------|       |                |");
+            mvprintw((LINES/2)+9,(COLS/2)- 29,"|              /\\       /      \\       /\\               |");
+            mvprintw((LINES/2)+10,(COLS/2)- 29,"|             /  '.___.'        '.___.'  \\              |");
+            mvprintw((LINES/2)+11,(COLS/2)- 29,"|            /                            \\             |");
+            mvprintw((LINES/2)+12,(COLS/2)- 29," \\          /                              \\           /");
+            mvprintw((LINES/2)+13,(COLS/2)- 29,"  \\________/                                \\_________/");
             attroff(COLOR_PAIR(3));
             attroff(A_BOLD);
             win=1;
-            napms(2000);
+            timeout(-1);
+            int i=0;
+            attron(COLOR_PAIR(3));
+            mvprintw(i,(COLS/2)-50,"🌟");
+            mvprintw(i,(COLS/2)+50,"🌟");
+            mvprintw(i+1,(COLS/2)-50,"🌟");
+            mvprintw(i+1,(COLS/2)+50,"🌟");
+            mvprintw(i+2,(COLS/2)-50,"🌟");
+            mvprintw(i+2,(COLS/2)+50,"🌟");
+            mvprintw(i+3,(COLS/2)-50,"🌟");
+            mvprintw(i+3,(COLS/2)+50,"🌟");
+            mvprintw(i+4,(COLS/2)-50,"🌟");
+            mvprintw(i+4,(COLS/2)+50,"🌟");
+            mvprintw(i+5,(COLS/2)-50,"🌟");
+            mvprintw(i+5,(COLS/2)+50,"🌟");
+            mvprintw(i,(COLS/2)-49,"🌟");
+            mvprintw(i,(COLS/2)+49,"🌟");
+            mvprintw(i+1,(COLS/2)-49,"🌟");
+            mvprintw(i+1,(COLS/2)+49,"🌟");
+            mvprintw(i+2,(COLS/2)-49,"🌟");
+            mvprintw(i+2,(COLS/2)+49,"🌟");
+            mvprintw(i+3,(COLS/2)-49,"🌟");
+            mvprintw(i+3,(COLS/2)+49,"🌟");
+            mvprintw(i+4,(COLS/2)-49,"🌟");
+            mvprintw(i+4,(COLS/2)+49,"🌟");
+            mvprintw(i+5,(COLS/2)-49,"🌟");
+            mvprintw(i+5,(COLS/2)+49,"🌟");
+            mvprintw(i,(COLS/2)-51,"🌟");
+            mvprintw(i,(COLS/2)+51,"🌟");
+            mvprintw(i+1,(COLS/2)-51,"🌟");
+            mvprintw(i+1,(COLS/2)+51,"🌟");
+            mvprintw(i+2,(COLS/2)-51,"🌟");
+            mvprintw(i+2,(COLS/2)+51,"🌟");
+            mvprintw(i+3,(COLS/2)-51,"🌟");
+            mvprintw(i+3,(COLS/2)+51,"🌟");
+            mvprintw(i+4,(COLS/2)-51,"🌟");
+            mvprintw(i+4,(COLS/2)+51,"🌟");
+            mvprintw(i+5,(COLS/2)-51,"🌟");
+            mvprintw(i+5,(COLS/2)+51,"🌟");
+            for(int i =5;i<LINES-10;i++){
+                mvprintw(i-1,COLS-20,"                   ");
+                mvprintw(i-5,(COLS/2)-50," ");
+                mvprintw(i-5,(COLS/2)+50," ");
+                mvprintw(i-5,(COLS/2)-49," ");
+                mvprintw(i-5,(COLS/2)+49," ");
+                mvprintw(i-5,(COLS/2)-51," ");
+                mvprintw(i-5,(COLS/2)+51," ");
+                mvprintw(i,(COLS/2)-50,"🌟");
+                mvprintw(i,(COLS/2)+50,"🌟");
+                mvprintw(i,(COLS/2)-49,"🌟");
+                mvprintw(i,(COLS/2)+49,"🌟");
+                mvprintw(i,(COLS/2)-51,"🌟");
+                mvprintw(i,(COLS/2)+51,"🌟");
+                mvprintw(i,COLS-20,"DEVELOPED by MR RZT");
+                refresh();
+                usleep(300000);
+            }
+            getch();
+            attroff(COLOR_PAIR(3));
             return 'q';
         }
         else if(map_check[hero.y][hero.x]=='<'){
-            mvprintw(0,0,"Click right key...                                              ");
+            mvprintw(0,0,"Click change level...                                              ");
             timeout(-1);
             int change_floor=getch();
             switch(change_floor){
@@ -4682,9 +4851,7 @@ int hero_movement(Map *map,int*** map_check_ptrr,int***visible_ptrr, char* usern
                     break;
                 default:
                     break;
-            }  
-            getch();
-            
+            }              
             if(current_floor==1){
                 display_visible_map(map_ptr_floor1, *visible_ptr_floor1);
                 map_ptr=map_ptr_floor1;
@@ -5402,28 +5569,45 @@ void display_visible_map(Map*map, int** visible) {
         }
     }
 }
-void play_music()
+void play_music(int room_type)
 {
 	char command[256];
-
 	kill_music();
-	if (settings.selected_music == 0)
-	{
-		return;
-	}
-	if (settings.selected_music == 1)
-	{
-		snprintf(command, sizeof(command), "mpg123 1.mp3 > /dev/null 2>&1 &");
-	}
-	else if (settings.selected_music == 2)
-	{
-		snprintf(command, sizeof(command), "mpg123 2.mp3 > /dev/null 2>&1 &");
-	}
-	else if (settings.selected_music == 3)
-	{
-		snprintf(command, sizeof(command), "mpg123 3.mp3 > /dev/null 2>&1 &");
-	}
-	system(command);
+    if(room_type==0){
+        if (settings.selected_music == 0)
+        {
+            return;
+        }
+        if (settings.selected_music == 1)
+        {
+            snprintf(command, sizeof(command), "mpg123 1.mp3 > /dev/null 2>&1 &");
+        }
+        else if (settings.selected_music == 2)
+        {
+            snprintf(command, sizeof(command), "mpg123 2.mp3 > /dev/null 2>&1 &");
+        }
+        else if (settings.selected_music == 3)
+        {
+            snprintf(command, sizeof(command), "mpg123 3.mp3 > /dev/null 2>&1 &");
+        }
+        system(command);
+    }
+    else if(room_type==1){
+        if (settings.selected_music == 0)
+        {
+            return;
+        }
+        snprintf(command, sizeof(command), "mpg123 enchant_room.mp3 > /dev/null 2>&1 &");
+        system(command);
+    }
+    else if(room_type==2){
+        if (settings.selected_music == 0)
+        {
+            return;
+        }
+        snprintf(command, sizeof(command), "mpg123 treasure_room.mp3 > /dev/null 2>&1 &");
+        system(command);
+    }
 }
 void kill_music()
 {
@@ -5556,7 +5740,6 @@ void food_menu(){
                 hero.inventory[0]-=1;
                 hero.food_count-=1;
                 hero.hunger=0;
-                hero.health=10;
                 getch();
                 food_menu();
 
@@ -5647,7 +5830,7 @@ void load_matrices(char *username, int** matrices,int i,int j,FILE *file) {
 }
 void save_hero(FILE *file, Hero *hero) {
     fprintf(file, "Hero:\n");
-    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
             hero->x, hero->y,
             hero->health, hero->hunger, hero->gold,
             hero->inventory[0], hero->inventory[1],
@@ -5655,12 +5838,12 @@ void save_hero(FILE *file, Hero *hero) {
             hero->weapon[0], hero->weapon[1],
             hero->weapon[2], hero->weapon[3],
             hero->weapon[4],hero->using_weapon, hero->food_count,hero->spell[0],
-            hero->spell[1],hero->spell[2],hero->has_key,hero->has_broken_key);
+            hero->spell[1],hero->spell[2],hero->has_key,hero->has_broken_key,win,lose);
     fprintf(file, "current floor:%d\n",current_floor);
 }
 void load_hero(FILE *file, Hero *hero) {
     fscanf(file, "Hero:\n");
-    fscanf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+    fscanf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
             &hero->x, &hero->y,
             &hero->health, &hero->hunger, &hero->gold,
             &hero->inventory[0], &hero->inventory[1],
@@ -5668,7 +5851,7 @@ void load_hero(FILE *file, Hero *hero) {
             &hero->weapon[0], &hero->weapon[1],
             &hero->weapon[2], &hero->weapon[3],
             &hero->weapon[4],&hero->using_weapon, &hero->food_count,&hero->spell[0],
-            &hero->spell[1],&hero->spell[2],&hero->has_key,&hero->has_broken_key);
+            &hero->spell[1],&hero->spell[2],&hero->has_key,&hero->has_broken_key,&win,&lose);
     fscanf(file, "current floor:%d\n",&current_floor);
 }
 void save_room(FILE *file, Room *room) {
@@ -5851,7 +6034,8 @@ void update_player_score(char *filename, char *target_username, int score_change
     for (int i = 0; i < player_count; i++) {
         if (strcmp(players[i].username, target_username) == 0) {
             players[i].total_score += score_change;  // افزایش امتیاز
-            players[i].total_gold += gold_change;// افزایش تعداد بازی‌ها
+            players[i].total_gold += gold_change;
+            players[i].games_played += 1;// افزایش تعداد بازی‌ها
             found = 1;
             break;
         }
@@ -5878,52 +6062,3 @@ void update_player_score(char *filename, char *target_username, int score_change
     }
     fclose(file);
 }
-/*
-void spawn_enemies(EnemyList *list, int map_width, int map_height) {
-    if (list->count >= MAX_ENEMIES) return; // اگر به حداکثر رسیده
-    
-    // احتمال 30% برای ایجاد دشمن جدید
-    if ((rand() % 100) < SPAWN_RATE) {
-        Enemy new_enemy = create_random_enemy(map_width, map_height);
-        list->enemies[list->count] = new_enemy;
-        list->count++;
-    }
-}
-Enemy create_random_enemy(int map_width, int map_height) {
-    Enemy enemy;
-    
-    // انتخاب تصادفی نوع دشمن
-    enemy.type = rand() % 5; // 0 تا 4
-    
-    // تعیین نماد و ویژگی‌ها بر اساس نوع
-    switch (enemy.type) {
-        case DEAMON:
-            enemy.symbol = 'D';
-            enemy.health = 8;
-            break;
-        case FIRE_BREATHING_MONSTER:
-            enemy.symbol = 'F';
-            enemy.health = 10;
-            break;
-        case GIANT:
-            enemy.symbol = 'G';
-            enemy.health = 15;
-            break;
-        case SNAKE:
-            enemy.symbol = 'S';
-            enemy.health = 20;
-            break;
-        case UNDEAD:
-            enemy.symbol = 'U';
-            enemy.health = 30;
-            break;
-    }
-    
-    // موقعیت تصادفی در محدوده نقشه
-    enemy.x = rand() % map_width;
-    enemy.y = rand() % map_height;
-    enemy.is_chasing = false;
-    enemy.chase_steps = 0;
-    
-    return enemy;
-}*/
