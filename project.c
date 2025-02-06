@@ -2058,8 +2058,8 @@ void add_pillars_stair_traps(Map *map) {
             int which_enemy=rand()%5;
             if(which_enemy==0){
                 for (int j = 0; j <rand()%2; j++) {
-                    int px = room->x + 2 + rand() % (room->width - 4);
-                    int py = room->y + 2 + rand() % (room->height - 4);
+                    int px = room->x + 1 + rand() % (room->width - 3);
+                    int py = room->y + 1 + rand() % (room->height - 3);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'D'; // (deamon)
                         map->rooms[i].enemies[0]=5;
@@ -2068,8 +2068,8 @@ void add_pillars_stair_traps(Map *map) {
             }
             if(which_enemy==1){
                 for (int j = 0; j <rand()%2; j++) {
-                    int px = room->x + 2 + rand() % (room->width - 4);
-                    int py = room->y + 2 + rand() % (room->height - 4);
+                    int px = room->x + 1 + rand() % (room->width - 3);
+                    int py = room->y + 1 + rand() % (room->height - 3);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'E'; // (Monster)
                         map->rooms[i].enemies[1]=10;
@@ -2078,8 +2078,8 @@ void add_pillars_stair_traps(Map *map) {
             }
             if(which_enemy==2){
                 for (int j = 0; j <rand()%2; j++) {
-                    int px = room->x + 2 + rand() % (room->width - 4);
-                    int py = room->y + 2 + rand() % (room->height - 4);
+                    int px = room->x + 1 + rand() % (room->width - 3);
+                    int py = room->y + 1 + rand() % (room->height - 3);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'g'; // (Giant)
                         map->rooms[i].enemies[2]=15;
@@ -2088,8 +2088,8 @@ void add_pillars_stair_traps(Map *map) {
             }
             if(which_enemy==3){
                 for (int j = 0; j <rand()%2; j++) {
-                    int px = room->x + 2 + rand() % (room->width - 4);
-                    int py = room->y + 2 + rand() % (room->height - 4);
+                    int px = room->x + 1 + rand() % (room->width - 3);
+                    int py = room->y + 1 + rand() % (room->height - 3);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'S'; // (Snake)
                         map->rooms[i].enemies[3]=20;
@@ -2098,8 +2098,8 @@ void add_pillars_stair_traps(Map *map) {
             }
             if(which_enemy==4){
                 for (int j = 0; j <rand()%2; j++) {
-                    int px = room->x + 2 + rand() % (room->width - 4);
-                    int py = room->y + 2 + rand() % (room->height - 4);
+                    int px = room->x + 1 + rand() % (room->width - 3);
+                    int py = room->y + 1 + rand() % (room->height - 3);
                     if (map->map[py][px] == '.') {
                         map->map[py][px] = 'U'; // (Undeed)
                         map->rooms[i].enemies[4]=30;
@@ -2187,8 +2187,8 @@ void add_pillars_stair_traps(Map *map) {
                 int which_enemy=rand()%5;
                 if(which_enemy==0){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'D'; // (deamon)
                             map->rooms[i].enemies[0]=5;
@@ -2197,8 +2197,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==1){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'E'; // (Monster)
                             map->rooms[i].enemies[1]=10;
@@ -2207,8 +2207,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==2){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'g'; // (Giant)
                             map->rooms[i].enemies[2]=15;
@@ -2217,8 +2217,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==3){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'S'; // (Snake)
                             map->rooms[i].enemies[3]=20;
@@ -2227,8 +2227,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==4){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'U'; // (Undeed)
                             map->rooms[i].enemies[4]=30;
@@ -2241,8 +2241,8 @@ void add_pillars_stair_traps(Map *map) {
                 int which_enemy=rand()%5;
                 if(which_enemy==0){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'D'; // (deamon)
                             map->rooms[i].enemies[0]=5;
@@ -2251,8 +2251,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==1){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'E'; // (Monster)
                             map->rooms[i].enemies[1]=10;
@@ -2261,8 +2261,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==2){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'g'; // (Giant)
                             map->rooms[i].enemies[2]=15;
@@ -2271,8 +2271,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==3){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'S'; // (Snake)
                             map->rooms[i].enemies[3]=20;
@@ -2281,8 +2281,8 @@ void add_pillars_stair_traps(Map *map) {
                 }
                 if(which_enemy==4){
                     for (int j = 0; j <rand()%2; j++) {
-                        int px = room->x + 2 + rand() % (room->width - 4);
-                        int py = room->y + 2 + rand() % (room->height - 4);
+                        int px = room->x + 1 + rand() % (room->width - 3);
+                        int py = room->y + 1 + rand() % (room->height - 3);
                         if (map->map[py][px] == '.') {
                             map->map[py][px] = 'U'; // (Undeed)
                             map->rooms[i].enemies[4]=30;
